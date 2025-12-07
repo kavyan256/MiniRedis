@@ -158,8 +158,24 @@ func handleConnection(conn net.Conn) {
 						mu.Unlock()
 						conn.Write([]byte(":0\r\n")) //0 indicates no key deleted
 					}
-					default:
+
+				case "PING":
+					if len(args) == 1 {
+						conn.Write([]byte("+PONG\r\n"))
+					} else if len(args) == 2 {
+						// Echo back the message
+						message := args[1]
+						conn.Write([]byte("$" + strconv.Itoa(len(message)) + "\r\n" + message + "\r\n"))
+					} else {
+						conn.Write([]byte("-ERR wrong number of arguments for 'PING' command\r\n"))
+					}
+					
+
+				
+				default:
 						conn.Write([]byte("-ERR something\r\n"))
+				
+				
 		}
 	
 	}
