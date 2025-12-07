@@ -1,13 +1,15 @@
 package main
 
 import (
-	"bufio" //in of tcp connection
-	"fmt"	//printing logs
-	"net"	//tcp connection
+	"bufio"   //in of tcp connection
+	"fmt"     //printing logs
+	"net"     //tcp connection
 	"strings" //string manipulation
+	"sync"
 )
 
 var store = make(map[string]string)        //global kv store 
+var mu sync.RWMutex				//mutex for concurrent access
 
 //entry point of program & start the tcp server
 func main() {
@@ -61,7 +63,11 @@ func handleConnection(conn net.Conn) {
 				//example "SET A 10"
 				key := parts[1]
 				value := parts[2]
+				
+				mu.Lock()
+				defer mu.Unlock()
 				store[key] = value
+				
 				conn.Write([]byte("OK\r\n"))
 
 				case "GET":
@@ -69,6 +75,8 @@ func handleConnection(conn net.Conn) {
 						conn.Write([]byte("ERR wrong number of arguments for 'GET' command\r\n"))
 					}
 
+					mu.RLock()
+					defer mu.RUnlock()
 					//example "GET A"
 					key := parts[1]
 					value, exists := store[key]
@@ -89,6 +97,8 @@ func handleConnection(conn net.Conn) {
 					_, exists := store[key]
 
 					if exists {
+						mu.Lock()
+						defer mu.Unlock()
 						delete(store, key)
 						conn.Write([]byte("1\r\n")) //1 indicates one key deleted
 					} else {
