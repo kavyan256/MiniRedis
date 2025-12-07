@@ -1,9 +1,11 @@
 package main
 
 import (
-	"bufio"   //in of tcp connection
-	"fmt"     //printing logs
-	"net"     //tcp connection
+	"bufio" //in of tcp connection
+	"fmt"   //printing logs
+	"io"
+	"net" //tcp connection
+	"strconv"
 	"strings" //string manipulation
 	"sync"
 )
@@ -31,55 +33,105 @@ func main() {
 	}
 }
 
+func parseResp(reader *bufio.Reader) ([]string, error) {
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return nil, err
+	}
+
+	line = strings.TrimSpace(line)
+	if len(line) == 0 || line[0] != '*' {
+		return nil, fmt.Errorf("invalid RESP format.(* expected)")
+	}
+
+	numArgs, err := strconv.Atoi(line[1:])  // ASCII to int
+	if( err != nil || numArgs <= 0 ){
+		return nil, fmt.Errorf("invalid RESP length")
+	}
+
+	args := make([]string, numArgs)
+
+	for i := 0 ; i<numArgs ; i++ {
+		lenline, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, fmt.Errorf("io error reading bulk header")
+		}
+
+		lenline = strings.TrimSpace(lenline)
+		if len(lenline) == 0 || lenline[0] != '$' {
+			return nil, fmt.Errorf("invalid RESP format. $ expected")
+		}
+
+		length, err := strconv.Atoi(lenline[1:])
+		if err != nil {
+			return nil, fmt.Errorf("invalid bulk length")
+		}
+
+		buff := make([]byte, length)
+		if _ , err := io.ReadFull(reader, buff); err != nil {
+			return nil, fmt.Errorf("io error reading bulk data")
+		}
+
+		crlf, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, fmt.Errorf("protocol error: missing terminating CRLF")
+		}
+		if !strings.HasSuffix(crlf, "\r\n") {
+			return nil, fmt.Errorf("protocol error: invalid terminating CRLF")
+		}
+		
+		args[i] = string(buff)
+	}
+
+	return args, nil
+}
+
 func handleConnection(conn net.Conn) {
 	defer conn.Close() //close connection when function exits
 
 	fmt.Println("New client connected:", conn.RemoteAddr())
 
-
 	reader := bufio.NewReader(conn) //create a buffered reader
 
 	for {
-		line, err := reader.ReadString('\n') //read until newline
+		args, err := parseResp(reader)
 		if err != nil {
-			return //exit on error
+			conn.Write([]byte("ERR protocol error: " + err.Error() + "\r\n"))
+			return
 		}
 
-		parts := strings.Fields(strings.TrimSpace(line))
-		if len(parts) == 0 {
-			continue
-		}
-
-		command := strings.ToUpper(parts[0])
+		command := strings.ToUpper(args[0])
 
 		//done with parsing command
 		//handle commands
 
 		switch command {
 			case "SET":
-				if len(parts) != 3 {
+				if len(args) != 3 {
 					conn.Write([]byte("ERR wrong number of arguments for 'SET' command\r\n"))
+					continue
 				}
 				//example "SET A 10"
-				key := parts[1]
-				value := parts[2]
+				key := args[1]
+				value := args[2]
 				
 				mu.Lock()
-				defer mu.Unlock()
 				store[key] = value
+				mu.Unlock()
 				
 				conn.Write([]byte("OK\r\n"))
 
 				case "GET":
-					if len(parts) != 2 {
+					if len(args) != 2 {
 						conn.Write([]byte("ERR wrong number of arguments for 'GET' command\r\n"))
+						continue
 					}
 
 					mu.RLock()
-					defer mu.RUnlock()
 					//example "GET A"
-					key := parts[1]
+					key := args[1]
 					value, exists := store[key]
+					mu.RUnlock()
 					
 					if exists {
 						conn.Write([]byte(value + "\r\n"))
@@ -88,23 +140,24 @@ func handleConnection(conn net.Conn) {
 					}
 				
 				case "DEL":
-					if len(parts) != 2 {
+					if len(args) != 2 {
 						conn.Write([]byte("ERR wrong number of arguments for 'DEL' command\r\n"))
+						continue
 					}
 					
 					//example "DEL A"
-					key := parts[1]
-					_, exists := store[key]
+					key := args[1]
 
+					mu.Lock()
+					_, exists := store[key]
 					if exists {
-						mu.Lock()
-						defer mu.Unlock()
 						delete(store, key)
-						conn.Write([]byte("1\r\n")) //1 indicates one key deleted
+						mu.Unlock()
+						conn.Write([]byte("1(delete success)\r\n")) //1 indicates one key deleted
 					} else {
-						conn.Write([]byte("0\r\n")) //0 indicates no key deleted
+						mu.Unlock()
+						conn.Write([]byte("0(delete failed)\r\n")) //0 indicates no key deleted
 					}
-					
 					default:
 						conn.Write([]byte("ERR unknown command\r\n"))
 		}
