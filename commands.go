@@ -4,6 +4,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -45,7 +46,7 @@ func handleCommand(conn net.Conn, command string, args []string) {
 	}
 }
 
-//15 command
+//14 command + exit
 
 func handleSet(conn net.Conn, args []string) {
 	if len(args) != 3 {
@@ -55,38 +56,18 @@ func handleSet(conn net.Conn, args []string) {
 	key := args[1]
 	value := args[2]
 
-	mu.Lock()
-	WriteKey(key,value)
-	mu.Unlock()
+	entry := Entry{
+		Type:     TypeString,
+		Value:    value,
+		ExpireAt: 0,
+	}
 
+	setEntry(key, entry)
     LogCommand("SET", args[1:])
 
 	conn.Write([]byte("+OK\r\n"))
 }
 
-func isExpired(key string) bool {
-	mu.RLock()
-	exp, ok := expirations[key]
-	mu.RUnlock()
-
-	if !ok {
-		return false // no expiration set
-	}
-
-	if time.Now().Unix() >= exp {
-		// Key is expired → delete it atomically
-		mu.Lock()
-		delete(store, key)
-		mu.Unlock()
-
-		mu.Lock()
-		delete(expirations, key)
-		mu.Unlock()
-
-		return true
-	}
-	return false
-}
 
 func handleGet(conn net.Conn, args []string) {
 	if len(args) != 2 {
@@ -94,23 +75,19 @@ func handleGet(conn net.Conn, args []string) {
 		return
 	}
 
-	key := args[1]
-
-	// Check if key is expired (lazy deletion)
-	if isExpired(key) {
-		conn.Write([]byte("$-1\r\n")) // nil - key expired
+	entry, exists := getEntry(args[1])
+	if !exists || (entry.ExpireAt != 0 && entry.ExpireAt <= time.Now().Unix()) {
+		conn.Write([]byte("$-1\r\n"))
 		return
 	}
 
-	mu.RLock()
-	value, exists := store[key]
-	mu.RUnlock()
-
-	if exists {
-		conn.Write([]byte("$" + strconv.Itoa(len(value)) + "\r\n" + value + "\r\n"))
-	} else {
-		conn.Write([]byte("$-1\r\n"))
+	if entry.Type != TypeString {
+		conn.Write([]byte("-ERR wrong type of value for 'GET' command\r\n"))
+		return
 	}
+
+	value := entry.Value.(string)
+	conn.Write([]byte("$" + strconv.Itoa(len(value)) + "\r\n" + value + "\r\n"))
 }
 
 func handleDel(conn net.Conn, args []string) {
@@ -119,20 +96,9 @@ func handleDel(conn net.Conn, args []string) {
 		return
 	}
 
-	key := args[1]
-
-	mu.Lock()
-	_, exists := store[key]
-	if exists {
-		delete(store, key)
-	}
-	mu.Unlock()
-
-	mu.Lock()
-	delete(expirations, key)
-	mu.Unlock()
-
-	if exists {
+	removed := deleteEntry(args[1])
+	if removed {
+		LogCommand("DEL", args[1:])
 		conn.Write([]byte(":1\r\n"))
 	} else {
 		conn.Write([]byte(":0\r\n"))
@@ -165,14 +131,13 @@ func handleExists(conn net.Conn, args []string) {
 		return
 	}
 	count := 0
-	mu.RLock()
 	for _, key := range args[1:] {
-		_, exists := store[key]
+		_, exists := getEntry(key)
 		if exists {
 			count++
 		}
 	}
-	mu.RUnlock()
+
 	conn.Write([]byte(":" + strconv.Itoa(count) + "\r\n"))
 }
 
@@ -183,27 +148,41 @@ func handleIncr(conn net.Conn, args []string) {
 	}
 
 	key := args[1]
+	entry, exists := getEntry(key)
 
-	mu.Lock()
-	value, exists := store[key]
-	if !exists {
-		store[key] = "1"
-		mu.Unlock()
-		conn.Write([]byte(":1\r\n"))
-		return
+	var intValue int
+
+	if exists {
+		if entry.Type != TypeString && entry.Type != TypeInt {
+			conn.Write([]byte("-ERR value is not an integer\r\n"))
+			return
+		}
+
+		switch v := entry.Value.(type) {
+			case string:
+				var err error
+				intValue, err = strconv.Atoi(v)
+				if err != nil {
+					conn.Write([]byte("-ERR value is not an integer\r\n"))
+					return
+				}
+			case int:
+				intValue = v
+		}
+		intValue++
+	} else {
+		intValue = 1
 	}
 
-	intValue, err := strconv.Atoi(value)
-	if err != nil {
-		mu.Unlock()
-		conn.Write([]byte("-ERR value is not an integer\r\n"))
-		return
+	newEntry := Entry{
+		Type:     TypeInt,
+		Value:    intValue,
+		ExpireAt: 0,
 	}
 
-	intValue++
-	WriteKey(key, strconv.Itoa(intValue))
-	mu.Unlock()
-    LogCommand("INCR", args[1:])
+	setEntry(key, newEntry)
+	LogCommand("INCR", args[1:])
+
 	conn.Write([]byte(":" + strconv.Itoa(intValue) + "\r\n"))
 }
 
@@ -214,27 +193,43 @@ func handleDecr(conn net.Conn, args []string) {
 	}
 
 	key := args[1]
+	entry, exists := getEntry(key)
+	
+	var intValue int
 
-	mu.Lock()
-	value, exists := store[key]
-	if !exists {
-		store[key] = "-1"
-		mu.Unlock()
-		conn.Write([]byte(":-1\r\n"))
-		return
+	if exists {
+		if entry.Type != TypeString && entry.Type != TypeInt {
+			conn.Write([]byte("-ERR value is not an integer\r\n"))
+			return
+		}
+
+		switch v := entry.Value.(type) {
+			case string:
+				var err error
+				intValue, err = strconv.Atoi(v)
+				if err != nil {
+					conn.Write([]byte("-ERR value is not an integer\r\n"))
+					return
+				}
+			case int:
+				intValue = v
+		}
+		intValue--
+	} else {
+		intValue = -1
 	}
 
-	intValue, err := strconv.Atoi(value)
-	if err != nil {
-		mu.Unlock()
-		conn.Write([]byte("-ERR value is not an integer\r\n"))
-		return
+	newEntry := Entry{
+		Type:     TypeInt,
+		Value:    intValue,
+		ExpireAt: 0,
 	}
 
-	intValue--
-	store[key] = strconv.Itoa(intValue)
-	mu.Unlock()
+	setEntry(key, newEntry)
+	LogCommand("DECR", args[1:])
+
 	conn.Write([]byte(":" + strconv.Itoa(intValue) + "\r\n"))
+	
 }
 
 func handleMget(conn net.Conn, args []string) {
@@ -243,18 +238,16 @@ func handleMget(conn net.Conn, args []string) {
 		return
 	}
 
-	numKeys := len(args) - 1
-	conn.Write([]byte("*" + strconv.Itoa(numKeys) + "\r\n"))
-
+	conn.Write([]byte("*" + strconv.Itoa(len(args)-1) + "\r\n"))
 	for _, key := range args[1:] {
-		mu.RLock()
-		value, exists := store[key]
-		mu.RUnlock()
-		if exists {
-			conn.Write([]byte("$" + strconv.Itoa(len(value)) + "\r\n" + value + "\r\n"))
-		} else {
+		entry, exists := getEntry(key)
+		if !exists || (entry.ExpireAt != 0 && entry.ExpireAt <= time.Now().Unix()) {
 			conn.Write([]byte("$-1\r\n"))
+			continue
 		}
+
+		val := entry.Value.(string)
+		conn.Write([]byte("$" + strconv.Itoa(len(val)) + "\r\n" + val + "\r\n"))
 	}
 }
 
@@ -264,13 +257,20 @@ func handleMset(conn net.Conn, args []string) {
 		return
 	}
 
-	mu.Lock()
 	for i := 1; i < len(args); i += 2 {
 		key := args[i]
 		value := args[i+1]
-		store[key] = value
+
+		entry := Entry{
+			Type:     TypeString,
+			Value:    value,
+			ExpireAt: 0,
+		}
+
+		setEntry(key, entry)
 	}
-	mu.Unlock()
+
+	LogCommand("MSET", args[1:])
 	conn.Write([]byte("+OK\r\n"))
 }
 
@@ -288,11 +288,12 @@ func handleFlushall(conn net.Conn, args []string) {
 	switch mode {
 	case "SYNC":
 		mu.Lock()
-		old := store
-		store = make(map[string]string)
+		old := db
+		db = make(map[string]Entry)
+		atomic.StoreInt64(&usedMemory, 0)
 		mu.Unlock()
 
-		go func(m map[string]string) {
+		go func(m map[string]Entry) {
 			_ = m
 		}(old)
 
@@ -301,7 +302,9 @@ func handleFlushall(conn net.Conn, args []string) {
 	case "ASYNC":
 		go func() {
 			mu.Lock()
-			store = make(map[string]string)
+			db = make(map[string]Entry)
+			lastAccess = make(map[string]int64)
+			atomic.StoreInt64(&usedMemory, 0)
 			mu.Unlock()
 		}()
 		conn.Write([]byte("+OK\r\n"))
@@ -312,83 +315,79 @@ func handleFlushall(conn net.Conn, args []string) {
 }
 
 func handleExpire(conn net.Conn, args []string) {
-	if len(args) != 3 {
-		conn.Write([]byte("-ERR wrong number of arguments for 'EXPIRE' command\r\n"))
-		return
-	}
+    // EXPIRE key seconds [NX|XX|GT|LT]
+    if len(args) != 3 && len(args) != 4 {
+        conn.Write([]byte("-ERR wrong number of arguments for 'EXPIRE' command\r\n"))
+        return
+    }
 
-	key := args[1]
-	option := "NX"
-	if len(args) == 4 {
-		option = strings.ToUpper(args[3])
-	}
+    key := args[1]
 
-	seconds, err := strconv.Atoi(args[2])
-	if err != nil || seconds < 0 {
-		conn.Write([]byte("-ERR invalid expire time\r\n"))
-		return
-	}
+    seconds, err := strconv.Atoi(args[2])
+    if err != nil || seconds < 0 {
+        conn.Write([]byte("-ERR invalid expire time\r\n"))
+        return
+    }
 
-	// FIX: Check key exists in store FIRST (with mu)
-	mu.RLock()
-	_, keyExists := store[key]
-	mu.RUnlock()
+    option := "NONE"
+    if len(args) == 4 {
+        option = strings.ToUpper(args[3])
+    }
 
-	if !keyExists {
-		conn.Write([]byte(":0\r\n")) // key doesn't exist
-		return
-	}
+    // Load the entry
+    entry, exists := getEntry(key)
+    if !exists {
+        conn.Write([]byte(":0\r\n")) // key does not exist
+        return
+    }
 
-	// FIX: Convert to Unix timestamp (current time + seconds)
-	expirationTime := time.Now().Unix() + int64(seconds)
+    newExpire := time.Now().Unix() + int64(seconds)
+    oldExpire := entry.ExpireAt
 
-	mu.Lock()
-	defer mu.Unlock()
+    switch option {
+    case "NONE":
+        entry.ExpireAt = newExpire
 
-	switch option {
-	case "NX":
-		// Only set if no expiration exists
-		_, exists := expirations[key]
-		if !exists {
-			expirations[key] = expirationTime
-			conn.Write([]byte(":1\r\n"))
-		} else {
-			conn.Write([]byte(":0\r\n"))
-		}
+    case "NX": // Only set if no expiration exists
+        if oldExpire != 0 {
+            conn.Write([]byte(":0\r\n"))
+            return
+        }
+        entry.ExpireAt = newExpire
 
-	case "XX":
-		// Only set if expiration already exists
-		_, exists := expirations[key]
-		if exists {
-			expirations[key] = expirationTime
-			conn.Write([]byte(":1\r\n"))
-		} else {
-			conn.Write([]byte(":0\r\n"))
-		}
+    case "XX": // Only set if expiration exists
+        if oldExpire == 0 {
+            conn.Write([]byte(":0\r\n"))
+            return
+        }
+        entry.ExpireAt = newExpire
 
-	case "GT":
-		// Only set if new expiration > current expiration
-		current, exists := expirations[key]
-		if !exists || expirationTime > current {
-			expirations[key] = expirationTime
-			conn.Write([]byte(":1\r\n"))
-		} else {
-			conn.Write([]byte(":0\r\n"))
-		}
+    case "GT": // Only set if new > old
+        if oldExpire != 0 && newExpire <= oldExpire {
+            conn.Write([]byte(":0\r\n"))
+            return
+        }
+        entry.ExpireAt = newExpire
 
-	case "LT":
-		// Only set if new expiration < current expiration
-		current, exists := expirations[key]
-		if !exists || expirationTime < current {
-			expirations[key] = expirationTime
-			conn.Write([]byte(":1\r\n"))
-		} else {
-			conn.Write([]byte(":0\r\n"))
-		}
+    case "LT": // Only set if new < old
+        if oldExpire != 0 && newExpire >= oldExpire {
+            conn.Write([]byte(":0\r\n"))
+            return
+        }
+        entry.ExpireAt = newExpire
 
-	default:
-		conn.Write([]byte("-ERR invalid option for 'EXPIRE' command\r\n"))
-	}
+    default:
+        conn.Write([]byte("-ERR invalid expire option\r\n"))
+        return
+    }
+
+    // Save updated entry
+    setEntry(key, entry)
+
+    // Log to AOF
+    LogCommand("EXPIRE", args[1:])
+
+    conn.Write([]byte(":1\r\n"))
 }
 
 func handlePersist(conn net.Conn, args []string) {
@@ -397,17 +396,13 @@ func handlePersist(conn net.Conn, args []string) {
 		return
 	}
 
-	key := args[1]
-
-	mu.Lock()
-	_, exists := expirations[key]
-	if exists {
-		delete(expirations, key)
+	success := PersistEntry(args[1])
+	if success {
+		LogCommand("PERSIST", args[1:])
 		conn.Write([]byte(":1\r\n"))
 	} else {
 		conn.Write([]byte(":0\r\n"))
 	}
-	mu.Unlock()
 }
 
 func handleTTL(conn net.Conn, args []string) {
@@ -416,32 +411,23 @@ func handleTTL(conn net.Conn, args []string) {
 		return
 	}
 
-	key := args[1]
-
 	// Check if key exists
-	mu.RLock()
-	_, exists := store[key]
-	mu.RUnlock()
-
+	entry, exists := getEntry(args[1])
 	if !exists {
 		conn.Write([]byte(":-2\r\n")) // key doesn't exist
 		return
 	}
 
-	// Check expiration
-	mu.RLock()
-	exp, hasExpiration := expirations[key]
-	mu.RUnlock()
-
-	if !hasExpiration {
-		conn.Write([]byte(":-1\r\n")) // no expiration set
+	if entry.ExpireAt == 0 {
+		conn.Write([]byte(":-1\r\n")) // key has no expiration
 		return
 	}
 
-	// Return seconds remaining (not absolute timestamp)
-	secondsRemaining := exp - time.Now().Unix()
-	if secondsRemaining < 0 {
-		secondsRemaining = 0
+	ttl := entry.ExpireAt - time.Now().Unix()
+	if ttl < 0 {
+		conn.Write([]byte(":-2\r\n")) // key has expired
+		return
 	}
-	conn.Write([]byte(":" + strconv.FormatInt(secondsRemaining, 10) + "\r\n"))
+
+	conn.Write([]byte(":" + strconv.FormatInt(ttl, 10) + "\r\n"))
 }

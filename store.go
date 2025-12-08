@@ -4,12 +4,27 @@ import (
 	"sync"
 )
 
-var store = make(map[string]string)
-var expirations = make(map[string]int64)
+var db = make(map[string]Entry)
+var usedMemory int64 = 0
+var lastAccess = map[string]int64{}
 
 var mu sync.RWMutex
-var aofMu sync.RWMutex
+var aofMu sync.Mutex
 
 var isReplayingAOF = false
 
-//Expiration cleanup janitor
+type EntryType int
+
+const (
+	TypeString EntryType = iota
+	TypeInt
+	TypeList
+	TypeSet
+	TypeHash
+)
+
+type Entry struct {
+	Type       EntryType
+	Value 	   interface{}
+	ExpireAt   int64
+} 

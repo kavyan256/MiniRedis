@@ -1,97 +1,111 @@
 package main
 
 import (
-	"bufio" //in of tcp connection
-	"fmt"   //printing logs
-	"net" //tcp connection
-	"strings" //string manipulation
-	"time" //for janitor ticker
+    "bufio"
+    "fmt"
+    "io"
+    "net"
+    "strings"
+    "time"
 )
 
-//entry point of program & start the tcp server
 func main() {
-	listener, err := net.Listen("tcp", ":6379") //listen on port 8080
-	if err != nil {
-		fmt.Println("-Error starting server:", err)
-		return
-	}
 
-	fmt.Println("Server(Mini-Redis) is listening on port 6379 ...")
+    // Initialize AOF
+    err := InitAOF()
+    if err != nil {
+        fmt.Println("Error initializing AOF:", err)
+        return
+    }
 
-	go startJanitor() //start expiration janitor
+    // Replay AOF BEFORE accepting clients
+    ReplayAOF()
 
-	//infinite loop to accept incoming clients
-	for {
-		conn, err := listener.Accept() //accept incoming connection
-		if err != nil {
-			continue
-		}
-		go handleConnection(conn) //handle connection concurrently
-	}
+    // Start periodic fsync
+    go BackgroundAOFFsync()
+
+    // Start TCP server
+    listener, err := net.Listen("tcp", ":6379")
+    if err != nil {
+        fmt.Println("-Error starting server:", err)
+        return
+    }
+
+    fmt.Println("Server(Mini-Redis) is listening on port 6379 ...")
+
+    // Start expiration janitor
+    go startJanitor()
+
+    for {
+        conn, err := listener.Accept()
+        if err != nil {
+            continue
+        }
+        go handleConnection(conn)
+    }
 }
 
 func handleConnection(conn net.Conn) {
-	defer conn.Close() //close connection when function exits
+    defer conn.Close()
 
-	fmt.Println("New client connected:", conn.RemoteAddr())
+    fmt.Println("New client connected:", conn.RemoteAddr())
 
-	reader := bufio.NewReader(conn) //create a buffered reader
+    reader := bufio.NewReader(conn)
 
-	for {
-		args, err := parseResp(reader)
-		if err != nil {
-			conn.Write([]byte("-ERR protocol error: " + err.Error() + "\r\n"))
-			return
-		}
+    for {
+        args, err := parseResp(reader)
+        if err != nil {
 
-		command := strings.ToUpper(args[0])
+            // Client disconnected normally
+            if err == io.EOF {
+                fmt.Println("Client disconnected:", conn.RemoteAddr())
+                return
+            }
 
-		//done with parsing command
-		//handle commands
-		handleCommand(conn, command, args)
-	
-	}
+            // Other protocol errors
+            conn.Write([]byte("-ERR protocol error: " + err.Error() + "\r\n"))
+            return
+        }
+
+        if len(args) == 0 {
+            conn.Write([]byte("-ERR empty command\r\n"))
+            continue
+        }
+
+        command := strings.ToUpper(args[0])
+        handleCommand(conn, command, args)
+    }
 }
 
 func startJanitor() {
-	go func() {
-		ticker := time.NewTicker(10 * time.Second)
-		defer ticker.Stop()
-
-		for range ticker.C {
-			cleanExpiredKeys()
-		}
-	}()
+    ticker := time.NewTicker(10 * time.Second)
+    for range ticker.C {
+        cleanExpiredEntries()
+    }
 }
 
-func cleanExpiredKeys() {
-	var keysToDelete []string
+func cleanExpiredEntries() {
+    now := time.Now().Unix()
+    toDelete := []string{}
 
-	// Find expired keys (read-lock expirations)
-	mu.RLock()
-	for key := range expirations {
-		if isExpired(key) {
-			keysToDelete = append(keysToDelete, key)
-		}
-	}
-	mu.RUnlock()
+    mu.RLock()
+    for key, entry := range db {
+        if entry.ExpireAt != 0 && entry.ExpireAt <= now {
+            toDelete = append(toDelete, key)
+        }
+    }
+    mu.RUnlock()
 
-	// Delete from store
-	if len(keysToDelete) > 0 {
-		mu.Lock()
-		for _, key := range keysToDelete {
-			delete(store, key)
-		}
-		mu.Unlock()
+    if len(toDelete) == 0 {
+        return
+    }
 
-		// Delete from expirations
-		mu.Lock()
-		for _, key := range keysToDelete {
-			delete(expirations, key)
-		}
-		mu.Unlock()
-		fmt.Printf("[Janitor] Cleaned %d expired keys\n", len(keysToDelete))
-	}
+    mu.Lock()
+    for _, key := range toDelete {
+        delete(db, key)
+    }
+    mu.Unlock()
+
+    fmt.Printf("[Janitor] Cleaned %d expired keys\n", len(toDelete))
 }
-
 
