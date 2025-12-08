@@ -17,6 +17,8 @@ func main() {
 
 	fmt.Println("Server(Mini-Redis) is listening on port 6379 ...")
 
+	go startJanitor() //start expiration janitor
+
 	//infinite loop to accept incoming clients
 	for {
 		conn, err := listener.Accept() //accept incoming connection
