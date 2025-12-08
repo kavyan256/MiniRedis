@@ -30,6 +30,10 @@ func handleCommand(conn net.Conn, command string, args []string) {
         handleMset(conn, args)
     case "FLUSHALL":
         handleFlushall(conn, args)
+    case "EXPIRE":
+        handleExpire(conn, args)
+    case "PERSIST":
+        handlePersist(conn, args)
     case "EXIT":
         conn.Write([]byte("+OK\r\n"))
         conn.Close()
@@ -49,6 +53,10 @@ func handleSet(conn net.Conn, args []string) {
     mu.Lock()
     store[key] = value
     mu.Unlock()
+
+    expMu.Lock()
+    delete(expirations, key)
+    expMu.Unlock()
 
     conn.Write([]byte("+OK\r\n"))
 }
@@ -85,6 +93,10 @@ func handleDel(conn net.Conn, args []string) {
         delete(store, key)
     }
     mu.Unlock()
+    
+    expMu.Lock()
+    delete(expirations, key)
+    expMu.Unlock()
 
     if exists {
         conn.Write([]byte(":1\r\n"))
@@ -262,4 +274,93 @@ func handleFlushall(conn net.Conn, args []string) {
     default:
         conn.Write([]byte("-ERR invalid option for 'FLUSHALL' command\r\n"))
     }
+}
+
+func handleExpire(conn net.Conn, args []string) {
+    if len(args) != 3 {
+        conn.Write([]byte("-ERR wrong number of arguments for 'EXPIRE' command\r\n"))
+        return
+    }
+
+    key := args[1]
+    option := "NX"
+    if len(args) == 4 {
+        option = strings.ToUpper(args[3])
+    }
+
+    seconds, err := strconv.Atoi(args[2])
+    if err != nil || seconds < 0 {
+        conn.Write([]byte("-ERR invalid expire time\r\n"))
+        return
+    }
+
+    expMu.Lock()
+    switch option {
+        case "NX":
+            mu.Lock()
+            _, exists := expirations[key]
+            if !exists {
+                expirations[key] = int64(seconds)
+                conn.Write([]byte(":1\r\n"))
+            } else {
+                conn.Write([]byte(":0\r\n"))
+            }
+            mu.Unlock()
+
+        case "XX":
+            mu.Lock()
+            _, exists := expirations[key]
+            if exists {
+                expirations[key] = int64(seconds)
+                conn.Write([]byte(":1\r\n"))
+            } else {
+                conn.Write([]byte(":0\r\n"))
+            }
+            mu.Unlock()
+
+        case "GT":
+            mu.Lock()
+            current, exists := expirations[key]
+            if !exists || int64(seconds) > current {
+                expirations[key] = int64(seconds)
+                conn.Write([]byte(":1\r\n"))
+            } else {
+                conn.Write([]byte(":0\r\n"))
+            }
+            mu.Unlock()
+
+        case "LT":
+            mu.Lock()
+            current, exists := expirations[key]
+            if !exists || int64(seconds) < current {
+                expirations[key] = int64(seconds)
+                conn.Write([]byte(":1\r\n"))
+            } else {
+                conn.Write([]byte(":0\r\n"))
+            }
+            mu.Unlock()
+
+        default:
+            conn.Write([]byte("-ERR invalid option for 'EXPIRE' command\r\n"))
+    }
+    expMu.Unlock()
+}
+
+func handlePersist(conn net.Conn, args []string) {
+    if len(args) != 2 {
+        conn.Write([]byte("-ERR wrong number of arguments for 'PERSIST' command\r\n"))
+        return
+    }
+
+    key := args[1]
+
+    expMu.Lock()
+    _, exists := expirations[key]
+    if exists {
+        delete(expirations, key)
+        conn.Write([]byte(":1\r\n"))
+    } else {
+        conn.Write([]byte(":0\r\n"))
+    }
+    expMu.Unlock()
 }
