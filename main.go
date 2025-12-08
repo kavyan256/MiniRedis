@@ -5,6 +5,7 @@ import (
 	"fmt"   //printing logs
 	"net" //tcp connection
 	"strings" //string manipulation
+	"time" //for janitor ticker
 )
 
 //entry point of program & start the tcp server
@@ -51,3 +52,46 @@ func handleConnection(conn net.Conn) {
 	
 	}
 }
+
+func startJanitor() {
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			cleanExpiredKeys()
+		}
+	}()
+}
+
+func cleanExpiredKeys() {
+	var keysToDelete []string
+
+	// Find expired keys (read-lock expirations)
+	mu.RLock()
+	for key := range expirations {
+		if isExpired(key) {
+			keysToDelete = append(keysToDelete, key)
+		}
+	}
+	mu.RUnlock()
+
+	// Delete from store
+	if len(keysToDelete) > 0 {
+		mu.Lock()
+		for _, key := range keysToDelete {
+			delete(store, key)
+		}
+		mu.Unlock()
+
+		// Delete from expirations
+		mu.Lock()
+		for _, key := range keysToDelete {
+			delete(expirations, key)
+		}
+		mu.Unlock()
+		fmt.Printf("[Janitor] Cleaned %d expired keys\n", len(keysToDelete))
+	}
+}
+
+

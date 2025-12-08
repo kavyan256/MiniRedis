@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"net"
 	"strconv"
 	"strings"
@@ -57,20 +56,18 @@ func handleSet(conn net.Conn, args []string) {
 	value := args[2]
 
 	mu.Lock()
-	store[key] = value
+	WriteKey(key,value)
 	mu.Unlock()
 
-	expMu.Lock()
-	delete(expirations, key)
-	expMu.Unlock()
+    LogCommand("SET", args[1:])
 
 	conn.Write([]byte("+OK\r\n"))
 }
 
 func isExpired(key string) bool {
-	expMu.RLock()
+	mu.RLock()
 	exp, ok := expirations[key]
-	expMu.RUnlock()
+	mu.RUnlock()
 
 	if !ok {
 		return false // no expiration set
@@ -82,9 +79,9 @@ func isExpired(key string) bool {
 		delete(store, key)
 		mu.Unlock()
 
-		expMu.Lock()
+		mu.Lock()
 		delete(expirations, key)
-		expMu.Unlock()
+		mu.Unlock()
 
 		return true
 	}
@@ -131,9 +128,9 @@ func handleDel(conn net.Conn, args []string) {
 	}
 	mu.Unlock()
 
-	expMu.Lock()
+	mu.Lock()
 	delete(expirations, key)
-	expMu.Unlock()
+	mu.Unlock()
 
 	if exists {
 		conn.Write([]byte(":1\r\n"))
@@ -204,8 +201,9 @@ func handleIncr(conn net.Conn, args []string) {
 	}
 
 	intValue++
-	store[key] = strconv.Itoa(intValue)
+	WriteKey(key, strconv.Itoa(intValue))
 	mu.Unlock()
+    LogCommand("INCR", args[1:])
 	conn.Write([]byte(":" + strconv.Itoa(intValue) + "\r\n"))
 }
 
@@ -344,8 +342,8 @@ func handleExpire(conn net.Conn, args []string) {
 	// FIX: Convert to Unix timestamp (current time + seconds)
 	expirationTime := time.Now().Unix() + int64(seconds)
 
-	expMu.Lock()
-	defer expMu.Unlock()
+	mu.Lock()
+	defer mu.Unlock()
 
 	switch option {
 	case "NX":
@@ -401,7 +399,7 @@ func handlePersist(conn net.Conn, args []string) {
 
 	key := args[1]
 
-	expMu.Lock()
+	mu.Lock()
 	_, exists := expirations[key]
 	if exists {
 		delete(expirations, key)
@@ -409,7 +407,7 @@ func handlePersist(conn net.Conn, args []string) {
 	} else {
 		conn.Write([]byte(":0\r\n"))
 	}
-	expMu.Unlock()
+	mu.Unlock()
 }
 
 func handleTTL(conn net.Conn, args []string) {
@@ -431,9 +429,9 @@ func handleTTL(conn net.Conn, args []string) {
 	}
 
 	// Check expiration
-	expMu.RLock()
+	mu.RLock()
 	exp, hasExpiration := expirations[key]
-	expMu.RUnlock()
+	mu.RUnlock()
 
 	if !hasExpiration {
 		conn.Write([]byte(":-1\r\n")) // no expiration set
@@ -446,47 +444,4 @@ func handleTTL(conn net.Conn, args []string) {
 		secondsRemaining = 0
 	}
 	conn.Write([]byte(":" + strconv.FormatInt(secondsRemaining, 10) + "\r\n"))
-}
-
-func startJanitor() {
-	go func() {
-		ticker := time.NewTicker(10 * time.Second)
-		defer ticker.Stop()
-
-		for range ticker.C {
-			cleanExpiredKeys()
-		}
-	}()
-}
-
-func cleanExpiredKeys() {
-	now := time.Now().Unix()
-	var keysToDelete []string
-
-	// Find expired keys (read-lock expirations)
-	expMu.RLock()
-	for key, exp := range expirations {
-		if now >= exp {
-			keysToDelete = append(keysToDelete, key)
-		}
-	}
-	expMu.RUnlock()
-
-	// Delete from store
-	if len(keysToDelete) > 0 {
-		mu.Lock()
-		for _, key := range keysToDelete {
-			delete(store, key)
-		}
-		mu.Unlock()
-
-		// Delete from expirations
-		expMu.Lock()
-		for _, key := range keysToDelete {
-			delete(expirations, key)
-		}
-		expMu.Unlock()
-
-		fmt.Printf("[Janitor] Cleaned %d expired keys\n", len(keysToDelete))
-	}
 }
