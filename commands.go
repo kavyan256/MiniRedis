@@ -33,6 +33,8 @@ var commandTable = map[string]CmdFunc{
 	"HLEN":     cmdHLEN,
 	//"TYPE":     cmdTYPE,
 	"ZADD":     cmdZADD,
+	"ZRANGE":   cmdZRANGE,
+	"ZSCORE":   cmdZSCORE,
 }
 
 //20 command + exit
@@ -639,3 +641,97 @@ func cmdZADD(args []string) (string, error) {
     }
     return ":1\r\n", nil
 }
+
+func cmdZRANGE(args []string) (string, error) {
+	if len(args) != 4 {
+		return "-ERR wrong number of arguments for 'ZRANGE' command\r\n", fmt.Errorf("wrong args")
+	}
+	
+	key := args[1]
+	start, err := strconv.Atoi(args[2])
+	if err != nil {
+		return "-ERR start is not an integer\r\n", err
+	}
+	end, err := strconv.Atoi(args[3])
+	if err != nil {
+		return "-ERR end is not an integer\r\n", err
+	}
+
+	entry, exists := getEntry(key)
+	if !exists {
+		return "*0\r\n", nil
+	}
+
+	if entry.Type != TypeZSet {
+		return "-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
+			fmt.Errorf("wrong type")
+	}
+
+	z := entry.Value.(ZSet)
+	n := len(z.List)
+
+	if n==0 {
+		return "*0\r\n", nil
+	}
+
+	// handle negative indices
+	if start < 0 {
+		start = n + start
+	}
+	if end < 0 {
+		end = n + end
+	}
+
+	// clamp indices
+	if start < 0 {
+		start = 0
+	}
+	if end >= n {
+		end = n - 1
+	}
+	if start > end {
+		return "*0\r\n", nil
+	}
+
+	count := end - start + 1
+
+	var resp strings.Builder
+	resp.WriteString("*" + strconv.Itoa(count) + "\r\n")
+
+	for i := start; i <= end; i++ {
+		member := z.List[i]
+		resp.WriteString("$" + strconv.Itoa(len(member.Member)) + "\r\n" + member.Member + "\r\n")
+	}
+	return resp.String(), nil
+}
+
+func cmdZSCORE(args []string) (string, error) {
+	if len(args) != 3 {
+		return "-ERR wrong number of arguments for 'ZSCORE' command\r\n", fmt.Errorf("wrong args")
+	}
+
+	key := args[1]
+	member := args[2]
+
+	entry, exists := getEntry(key)
+	if !exists {
+		return "$-1\r\n", nil
+	}
+
+	if entry.Type != TypeZSet {
+		return "-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
+			fmt.Errorf("wrong type")
+	}
+
+	z := entry.Value.(ZSet)
+
+	score, memberExists := z.Dict[member]
+	if !memberExists {
+		return "$-1\r\n", nil
+	}
+
+	scoreStr := strconv.FormatFloat(score, 'f', -1, 64)
+	resp := "$" + strconv.Itoa(len(scoreStr)) + "\r\n" + scoreStr + "\r\n"
+	return resp, nil
+}
+
