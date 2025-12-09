@@ -74,7 +74,6 @@ func cmdSET(args []string) (string, error) {
 	}
 
 	setEntry(key, entry)
-	LogCommand("SET", args[1:])
 	return "+OK\r\n", nil
 }
 
@@ -85,7 +84,6 @@ func cmdDEL(args []string) (string, error) {
 
 	removed := deleteEntry(args[1])
 	if removed {
-		LogCommand("DEL", args[1:])
 		return ":1\r\n", nil
 	} else {
 		return ":0\r\n", nil
@@ -163,7 +161,6 @@ func cmdINCR(args []string) (string, error) {
 	}
 
 	setEntry(key, newEntry)
-	LogCommand("INCR", args[1:])
 
 	return ":" + strconv.Itoa(intValue) + "\r\n", nil
 }
@@ -205,7 +202,6 @@ func cmdDECR(args []string) (string, error) {
 	}
 
 	setEntry(key, newEntry)
-	LogCommand("DECR", args[1:])
 
 	return ":" + strconv.Itoa(intValue) + "\r\n", nil
 }
@@ -248,7 +244,6 @@ func cmdMSET(args []string) (string, error) {
 		setEntry(key, entry)
 	}
 
-	LogCommand("MSET", args[1:])
 	return "+OK\r\n", nil
 }
 
@@ -353,7 +348,6 @@ func cmdEXPIRE(args []string) (string, error) {
 	setEntry(key, entry)
 
 	// Log to AOF
-	LogCommand("EXPIRE", args[1:])
 
 	return ":1\r\n", nil
 }
@@ -365,7 +359,6 @@ func cmdPERSIST(args []string) (string, error) {
 
 	success := PersistEntry(args[1])
 	if success {
-		LogCommand("PERSIST", args[1:])
 		return ":1\r\n", nil
 	} else {
 		return ":0\r\n", nil
