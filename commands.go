@@ -40,7 +40,7 @@ var commandTable = map[string]CmdFunc{
 	"ZRANGEBYSCORE": cmdZRANGEBYSCORE,
 }
 
-//20 command + exit
+//26 command + exit
 
 func cmdGET(args []string) (string, error) {
     

@@ -115,7 +115,19 @@ func handleCommand(conn net.Conn, command string, args []string) {
     if err == nil && !isReplayingAOF {
         upper := strings.ToUpper(command)
         switch upper {
-        case "MSET", "FLUSHALL", "DEL", "SET", "EXPIRE", "PERSIST", "INCR", "DECR", "ZADD":
+        case 
+            "SET", 
+            "DEL",
+            "INCR",
+            "DECR",
+            "MSET", 
+            "FLUSHALL",  
+            "EXPIRE", 
+            "PERSIST",
+            "HSET", 
+            "HDEL", 
+            "ZADD", 
+            "ZREM":
             LogCommand(upper, args[1:])
         }
     }
