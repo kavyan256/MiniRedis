@@ -80,3 +80,18 @@ func PersistEntry(key string) bool {
     setEntry(key, e)
     return true
 }
+
+func getHash(key string) (map[string]string) {
+	entry, exists := getEntry(key)
+	if !exists && entry.Type != TypeHash {
+		return nil
+	}
+
+	if exists {
+		return entry.Value.(map[string]string)
+	} else {
+		h := make(map[string]string)
+		setEntry(key, Entry{Type: TypeHash, Value: h})
+		return h
+	}
+}

@@ -25,6 +25,12 @@ var commandTable = map[string]CmdFunc{
 	"EXPIRE":   cmdEXPIRE,
 	"PERSIST":  cmdPERSIST,
 	"TTL":      cmdTTL,
+	"HSET":     cmdHSET,
+	"HGET":     cmdHGET,
+	"HDEL":     cmdHDEL,
+	"HGETALL":  cmdHGETALL,
+	"HEXISTS":  cmdHEXISTS,
+	"HLEN":     cmdHLEN,
 }
 
 //14 command + exit
@@ -390,10 +396,201 @@ func cmdTTL(args []string) (string, error) {
 }
 
 //HSET
+func cmdHSET(args []string) (string, error) {
+    // Minimum 1 field/value pair (HSET key f v)
+    if len(args) < 4 || (len(args)-2)%2 != 0 {
+        return "-ERR wrong number of arguments for 'HSET' command\r\n", fmt.Errorf("wrong args")
+    }
 
+    key := args[1]
+    entry, exists := getEntry(key)
+
+    var hash map[string]string
+
+    if exists {
+        if entry.Type != TypeHash {
+            return "-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
+                fmt.Errorf("wrong type")
+        }
+        hash = entry.Value.(map[string]string)
+    } else {
+        hash = make(map[string]string)
+    }
+
+    added := 0
+
+    // Process field/value pairs
+    for i := 2; i < len(args); i += 2 {
+        field := args[i]
+        value := args[i+1]
+
+        _, existedBefore := hash[field]
+        hash[field] = value
+
+        if !existedBefore {
+            added++
+        }
+    }
+
+    // Build new Entry
+    newEntry := Entry{
+        Type:  TypeHash,
+        Value: hash,
+    }
+
+    if exists {
+        newEntry.ExpireAt = entry.ExpireAt // preserve TTL
+    }
+
+    setEntry(key, newEntry)
+
+    // DO NOT LOG inside cmd-layer
+    return ":" + strconv.Itoa(added) + "\r\n", nil
+}
 
 //HGET
+func cmdHGET(args []string) (string, error) {
+	if len(args) != 3 {
+		return "-ERR wrong number of arguments for 'HGET' command\r\n", fmt.Errorf("wrong args")
+	}
+
+	key := args[1]
+	
+	entry , exists := getEntry(key)
+	if !exists {
+		return "$-1\r\n", nil
+	}
+
+	if entry.Type != TypeHash {
+		return "-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
+			fmt.Errorf("wrong type")
+	}
+
+	hash := entry.Value.(map[string]string)
+	field := args[2]
+
+	value, fieldExists := hash[field]
+	if !fieldExists {
+		return "$-1\r\n", nil
+	}
+
+	resp := "$" + strconv.Itoa(len(value)) + "\r\n" + value + "\r\n"
+	return resp, nil
+}
+
 //HDEL
+func cmdHDEL(args []string) (string, error) {
+	if len(args) < 3 {
+		return "-ERR wrong number of arguments for 'HDEL' command\r\n", fmt.Errorf("wrong args")
+	}
+
+	key := args[1]
+	entry, exists := getEntry(key)
+	if !exists {
+		return ":0\r\n", nil
+	}
+
+	if entry.Type != TypeHash {
+		return "-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
+			fmt.Errorf("wrong type")
+	}
+
+	hash := entry.Value.(map[string]string)
+	deleted := 0
+
+	for _, field := range args[2:] {
+		_, fieldExists := hash[field]
+		if fieldExists {
+			delete(hash, field)
+			deleted++
+		}
+	}
+
+	// Update the entry
+	entry.Value = hash
+	setEntry(key, entry)
+
+	return ":" + strconv.Itoa(deleted) + "\r\n", nil
+}
+
 //HGETALL
+func cmdHGETALL(args []string) (string, error) {
+	if len(args) != 2 {
+		return "-ERR wrong number of arguments for 'HGETALL' command\r\n", fmt.Errorf("wrong args")
+	}
+
+	key := args[1]
+	entry, exists := getEntry(key)
+	if !exists {
+		return "*0\r\n", nil
+	}
+
+	if entry.Type != TypeHash {
+		return "-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
+			fmt.Errorf("wrong type")
+	}
+
+	hash := entry.Value.(map[string]string)
+	count := len(hash) * 2
+
+	var resp strings.Builder
+	resp.WriteString("*" + strconv.Itoa(count) + "\r\n")
+
+	for field, value := range hash {
+		resp.WriteString("$" + strconv.Itoa(len(field)) + "\r\n" + field + "\r\n")
+		resp.WriteString("$" + strconv.Itoa(len(value)) + "\r\n" + value + "\r\n")
+	}
+
+	return resp.String(), nil
+}
+
 //HEXISTS
+func cmdHEXISTS(args []string) (string, error) {
+	if len(args) != 3 {
+		return "-ERR wrong number of arguments for 'HEXISTS' command\r\n", fmt.Errorf("wrong args")
+	}
+
+	key := args[1]
+	entry, exists := getEntry(key)
+	if !exists {
+		return ":0\r\n", nil
+	}
+
+	if entry.Type != TypeHash {
+		return "-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
+			fmt.Errorf("wrong type")
+	}
+
+	hash := entry.Value.(map[string]string)
+	field := args[2]
+
+	_, fieldExists := hash[field]
+	if fieldExists {
+		return ":1\r\n", nil
+	} else {
+		return ":0\r\n", nil
+	}
+}
+
 //HLEN
+func cmdHLEN(args []string) (string, error) {
+	if len(args) != 2 {
+		return "-ERR wrong number of arguments for 'HLEN' command\r\n", fmt.Errorf("wrong args")
+	}
+
+	key := args[1]
+	entry, exists := getEntry(key)
+	if !exists {
+		return ":0\r\n", nil
+	}
+
+	if entry.Type != TypeHash {
+		return "-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
+			fmt.Errorf("wrong type")
+	}
+
+	hash := entry.Value.(map[string]string)
+	length := len(hash)
+
+	return ":" + strconv.Itoa(length) + "\r\n", nil
+}
