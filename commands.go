@@ -11,32 +11,33 @@ import (
 type CmdFunc func(args []string) (string, error)
 
 var commandTable = map[string]CmdFunc{
-	"GET":      cmdGET,
-	"SET":      cmdSET,
-	"DEL":      cmdDEL,
-	"PING":     cmdPING,
-	"ECHO":     cmdECHO,
-	"EXISTS":   cmdEXISTS,
-	"INCR":     cmdINCR,
-	"DECR":     cmdDECR,
-	"MGET":     cmdMGET,
-	"MSET":     cmdMSET,
-	"FLUSHALL": cmdFLUSHALL,
-	"EXPIRE":   cmdEXPIRE,
-	"PERSIST":  cmdPERSIST,
-	"TTL":      cmdTTL,
-	"HSET":     cmdHSET,
-	"HGET":     cmdHGET,
-	"HDEL":     cmdHDEL,
-	"HGETALL":  cmdHGETALL,
-	"HEXISTS":  cmdHEXISTS,
-	"HLEN":     cmdHLEN,
-	//"TYPE":     cmdTYPE,
-	"ZADD":     cmdZADD,
-	"ZRANGE":   cmdZRANGE,
-	"ZSCORE":   cmdZSCORE,
-	"ZREM":     cmdZREM,
-	"ZCARD":    cmdZCARD,
+	"GET":      	 cmdGET,
+	"SET":      	 cmdSET,
+	"DEL":      	 cmdDEL,
+	"PING":     	 cmdPING,
+	"ECHO":     	 cmdECHO,
+	"EXISTS":   	 cmdEXISTS,
+	"INCR":     	 cmdINCR,
+	"DECR":     	 cmdDECR,
+	"MGET":     	 cmdMGET,
+	"MSET":     	 cmdMSET,
+	"FLUSHALL": 	 cmdFLUSHALL,
+	"EXPIRE":   	 cmdEXPIRE,
+	"PERSIST":  	 cmdPERSIST,
+	"TTL":      	 cmdTTL,
+	"HSET":     	 cmdHSET,
+	"HGET":     	 cmdHGET,
+	"HDEL":     	 cmdHDEL,
+	"HGETALL":  	 cmdHGETALL,
+	"HEXISTS":  	 cmdHEXISTS,
+	"HLEN":     	 cmdHLEN,
+	//"TYPE":     	 cmdTYPE,
+	"ZADD":     	 cmdZADD,
+	"ZRANGE":   	 cmdZRANGE,
+	"ZSCORE":   	 cmdZSCORE,
+	"ZREM":     	 cmdZREM,
+	"ZCARD":    	 cmdZCARD,
+	"ZRANGEBYSCORE": cmdZRANGEBYSCORE,
 }
 
 //20 command + exit
@@ -799,3 +800,52 @@ func cmdZCARD(args []string) (string, error) {
 	return ":" + strconv.Itoa(cardinality) + "\r\n", nil
 }
 
+func cmdZRANGEBYSCORE(args []string) (string, error) {
+	if len(args) != 4 {
+		return "-ERR wrong number of arguments for 'ZRANGEBYSCORE' command\r\n", fmt.Errorf("wrong args")
+	}
+
+	key := args[1]
+	minStr := args[2]
+	maxStr := args[3]
+
+	min, err := strconv.ParseFloat(minStr, 64)
+	if err != nil {
+		return "-ERR min is not a valid float\r\n", err
+	}
+
+	max, err := strconv.ParseFloat(maxStr, 64)
+	if err != nil {
+		return "-ERR max is not a valid float\r\n", err
+	}
+
+	entry, exists := getEntry(key)
+	if !exists {
+		return "*0\r\n", nil
+	}
+
+	if entry.Type != TypeZSet {
+		return "-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
+			fmt.Errorf("wrong type")
+	}
+
+	z := entry.Value.(ZSet)
+
+	var resp strings.Builder
+	count := 0
+	for _, item := range z.List {
+		if item.Score >= min && item.Score <= max {
+			count++
+		}
+	}
+
+	resp.WriteString("*" + strconv.Itoa(count) + "\r\n")
+
+	for _, item := range z.List {
+		if item.Score >= min && item.Score <= max {
+			resp.WriteString("$" + strconv.Itoa(len(item.Member)) + "\r\n" + item.Member + "\r\n")
+		}
+	}
+
+	return resp.String(), nil
+}
