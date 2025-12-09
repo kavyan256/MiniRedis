@@ -29,5 +29,14 @@ type Entry struct {
 	ExpireAt   int64
 } 
 
+type ZSet struct {
+	Dict map[string]float64
+	List []ZItem
+}
+
+type ZItem struct {
+	Member string
+	Score  float64
+}
 
 

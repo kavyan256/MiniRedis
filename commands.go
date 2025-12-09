@@ -31,6 +31,7 @@ var commandTable = map[string]CmdFunc{
 	"HGETALL":  cmdHGETALL,
 	"HEXISTS":  cmdHEXISTS,
 	"HLEN":     cmdHLEN,
+	//"TYPE":     cmdTYPE,
 }
 
 //20 command + exit
@@ -386,7 +387,6 @@ func cmdTTL(args []string) (string, error) {
 	return ":" + strconv.FormatInt(ttl, 10) + "\r\n", nil
 }
 
-//HSET
 func cmdHSET(args []string) (string, error) {
     // Minimum 1 field/value pair (HSET key f v)
     if len(args) < 4 || (len(args)-2)%2 != 0 {
@@ -439,7 +439,6 @@ func cmdHSET(args []string) (string, error) {
     return ":" + strconv.Itoa(added) + "\r\n", nil
 }
 
-//HGET
 func cmdHGET(args []string) (string, error) {
 	if len(args) != 3 {
 		return "-ERR wrong number of arguments for 'HGET' command\r\n", fmt.Errorf("wrong args")
@@ -469,7 +468,6 @@ func cmdHGET(args []string) (string, error) {
 	return resp, nil
 }
 
-//HDEL
 func cmdHDEL(args []string) (string, error) {
 	if len(args) < 3 {
 		return "-ERR wrong number of arguments for 'HDEL' command\r\n", fmt.Errorf("wrong args")
@@ -504,7 +502,6 @@ func cmdHDEL(args []string) (string, error) {
 	return ":" + strconv.Itoa(deleted) + "\r\n", nil
 }
 
-//HGETALL
 func cmdHGETALL(args []string) (string, error) {
 	if len(args) != 2 {
 		return "-ERR wrong number of arguments for 'HGETALL' command\r\n", fmt.Errorf("wrong args")
@@ -535,7 +532,6 @@ func cmdHGETALL(args []string) (string, error) {
 	return resp.String(), nil
 }
 
-//HEXISTS
 func cmdHEXISTS(args []string) (string, error) {
 	if len(args) != 3 {
 		return "-ERR wrong number of arguments for 'HEXISTS' command\r\n", fmt.Errorf("wrong args")
@@ -563,7 +559,6 @@ func cmdHEXISTS(args []string) (string, error) {
 	}
 }
 
-//HLEN
 func cmdHLEN(args []string) (string, error) {
 	if len(args) != 2 {
 		return "-ERR wrong number of arguments for 'HLEN' command\r\n", fmt.Errorf("wrong args")
