@@ -5,6 +5,7 @@ import (
     "fmt"
     "io"
     "net"
+    "strconv"
     "strings"
     "time"
 )
@@ -50,6 +51,7 @@ func handleConnection(conn net.Conn) {
 
     fmt.Println("New client connected:", conn.RemoteAddr())
 
+    selectedDB := 0
     reader := bufio.NewReader(conn)
 
     for {
@@ -73,7 +75,7 @@ func handleConnection(conn net.Conn) {
         }
 
         command := strings.ToUpper(args[0])
-        handleCommand(conn, command, args)
+        handleCommand(conn, command, args, &selectedDB)
     }
 }
 
@@ -86,31 +88,29 @@ func startJanitor() {
 
 func cleanExpiredEntries() {
     now := time.Now().Unix()
-    toDelete := []string{}
-
-    mu.RLock()
-    for key, entry := range db {
-        if entry.ExpireAt != 0 && entry.ExpireAt <= now {
-            toDelete = append(toDelete, key)
-        }
-    }
-    mu.RUnlock()
-
-    if len(toDelete) == 0 {
-        return
-    }
 
     mu.Lock()
-    for _, key := range toDelete {
-        delete(db, key)
-    }
-    mu.Unlock()
+    defer mu.Unlock()
 
-    fmt.Printf("[Janitor] Cleaned %d expired keys\n", len(toDelete))
+    totalDeleted := 0
+
+    for dbIndex := 0; dbIndex < NumDatabases; dbIndex++ {
+        for key, entry := range databases[dbIndex] {
+            if entry.ExpireAt != 0 && entry.ExpireAt <= now {
+                delete(databases[dbIndex], key)
+                totalDeleted++
+            }
+        }
+    }
+
+    if totalDeleted > 0 {
+        fmt.Printf("[Janitor] Cleaned %d expired keys\n", totalDeleted)
+    }
 }
 
-func handleCommand(conn net.Conn, command string, args []string) {
-    resp, err := execCommand(args)
+
+func handleCommand(conn net.Conn, command string, args []string, selectedDB *int) {
+    resp, err := execCommand(args, selectedDB)
 
     if err == nil && !isReplayingAOF {
         upper := strings.ToUpper(command)
@@ -135,17 +135,29 @@ func handleCommand(conn net.Conn, command string, args []string) {
     conn.Write([]byte(resp))
 }
 
-func execCommand(args []string) (string, error) {
+func execCommand(args []string, selectedDB *int) (string, error) {
     if len(args) == 0 {
         return "-ERR empty command\r\n", fmt.Errorf("empty")
     }
 
     cmd := strings.ToUpper(args[0])
 
+    if cmd == "SELECT" {
+        if len(args) != 2 {
+            return "-ERR wrong number of arguments for 'SELECT' command\r\n", fmt.Errorf("wrong args")
+        }
+        dbIndex, err := strconv.Atoi(args[1])
+        if err != nil || dbIndex < 0 || dbIndex >= NumDatabases {
+            return "-ERR invalid database index\r\n", fmt.Errorf("invalid db index")
+        }
+        *selectedDB = dbIndex
+        return "+OK\r\n", nil
+    }
+
     fn, ok := commandTable[cmd]
     if !ok {
         return "-ERR unknown command '" + cmd + "'\r\n", fmt.Errorf("unknown command")
     }
 
-    return fn(args)
+    return fn(args, selectedDB)
 }

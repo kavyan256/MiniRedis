@@ -1,73 +1,72 @@
 package main
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
-	"fmt"
 )
 
-type CmdFunc func(args []string) (string, error)
+type CmdFunc func(args []string, selectedDB *int) (string, error)
 
 var commandTable = map[string]CmdFunc{
-	"GET":      	 cmdGET,
-	"SET":      	 cmdSET,
-	"DEL":      	 cmdDEL,
-	"PING":     	 cmdPING,
-	"ECHO":     	 cmdECHO,
-	"EXISTS":   	 cmdEXISTS,
-	"INCR":     	 cmdINCR,
-	"DECR":     	 cmdDECR,
-	"MGET":     	 cmdMGET,
-	"MSET":     	 cmdMSET,
-	"FLUSHALL": 	 cmdFLUSHALL,
-	"EXPIRE":   	 cmdEXPIRE,
-	"PERSIST":  	 cmdPERSIST,
-	"TTL":      	 cmdTTL,
-	"HSET":     	 cmdHSET,
-	"HGET":     	 cmdHGET,
-	"HDEL":     	 cmdHDEL,
-	"HGETALL":  	 cmdHGETALL,
-	"HEXISTS":  	 cmdHEXISTS,
-	"HLEN":     	 cmdHLEN,
+	"GET":      cmdGET,
+	"SET":      cmdSET,
+	"DEL":      cmdDEL,
+	"PING":     cmdPING,
+	"ECHO":     cmdECHO,
+	"EXISTS":   cmdEXISTS,
+	"INCR":     cmdINCR,
+	"DECR":     cmdDECR,
+	"MGET":     cmdMGET,
+	"MSET":     cmdMSET,
+	"FLUSHALL": cmdFLUSHALL,
+	"EXPIRE":   cmdEXPIRE,
+	"PERSIST":  cmdPERSIST,
+	"TTL":      cmdTTL,
+	"HSET":     cmdHSET,
+	"HGET":     cmdHGET,
+	"HDEL":     cmdHDEL,
+	"HGETALL":  cmdHGETALL,
+	"HEXISTS":  cmdHEXISTS,
+	"HLEN":     cmdHLEN,
 	//"TYPE":     	 cmdTYPE,
-	"ZADD":     	 cmdZADD,
-	"ZRANGE":   	 cmdZRANGE,
-	"ZSCORE":   	 cmdZSCORE,
-	"ZREM":     	 cmdZREM,
-	"ZCARD":    	 cmdZCARD,
+	"ZADD":          cmdZADD,
+	"ZRANGE":        cmdZRANGE,
+	"ZSCORE":        cmdZSCORE,
+	"ZREM":          cmdZREM,
+	"ZCARD":         cmdZCARD,
 	"ZRANGEBYSCORE": cmdZRANGEBYSCORE,
 }
 
 //26 command + exit
 
-func cmdGET(args []string) (string, error) {
-    
-    if len(args) != 2 {
-        return "-ERR wrong number of arguments for 'GET'\r\n", fmt.Errorf("wrong args")
-    }
+func cmdGET(args []string, selectedDB *int) (string, error) {
 
-    key := args[1]
-    entry, exists := getEntry(key)
+	if len(args) != 2 {
+		return "-ERR wrong number of arguments for 'GET'\r\n", fmt.Errorf("wrong args")
+	}
 
-    if !exists {
-        return "$-1\r\n", nil
-    }
+	key := args[1]
+	entry, exists := getEntry(key, selectedDB)
 
-    if entry.Type != TypeString {
-        return "-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
-            fmt.Errorf("wrong type")
-    }
+	if !exists {
+		return "$-1\r\n", nil
+	}
 
-    value := entry.Value.(string)
+	if entry.Type != TypeString {
+		return "-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
+			fmt.Errorf("wrong type")
+	}
 
-    // Return bulk string
-    resp := "$" + strconv.Itoa(len(value)) + "\r\n" + value + "\r\n"
-    return resp, nil
+	value := entry.Value.(string)
+
+	// Return bulk string
+	resp := "$" + strconv.Itoa(len(value)) + "\r\n" + value + "\r\n"
+	return resp, nil
 }
 
-func cmdSET(args []string) (string, error) {
+func cmdSET(args []string, selectedDB *int) (string, error) {
 	if len(args) != 3 {
 		return "-ERR wrong number of arguments for 'SET'\r\n", fmt.Errorf("wrong args")
 	}
@@ -80,16 +79,16 @@ func cmdSET(args []string) (string, error) {
 		ExpireAt: 0,
 	}
 
-	setEntry(key, entry)
+	setEntry(key, entry, selectedDB)
 	return "+OK\r\n", nil
 }
 
-func cmdDEL(args []string) (string, error) {
+func cmdDEL(args []string, selectedDB *int) (string, error) {
 	if len(args) != 2 {
 		return "-ERR wrong number of arguments for 'DEL'\r\n", fmt.Errorf("wrong args")
 	}
 
-	removed := deleteEntry(args[1])
+	removed := deleteEntry(args[1], selectedDB)
 	if removed {
 		return ":1\r\n", nil
 	} else {
@@ -97,7 +96,7 @@ func cmdDEL(args []string) (string, error) {
 	}
 }
 
-func cmdPING(args []string) (string, error) {
+func cmdPING(args []string, selectedDB *int) (string, error) {
 	if len(args) == 1 {
 		return "+PONG\r\n", nil
 	} else if len(args) == 2 {
@@ -108,7 +107,7 @@ func cmdPING(args []string) (string, error) {
 	}
 }
 
-func cmdECHO(args []string) (string, error) {
+func cmdECHO(args []string, selectedDB *int) (string, error) {
 	if len(args) != 2 {
 		return "-ERR wrong number of arguments for 'ECHO' command\r\n", fmt.Errorf("wrong args")
 	}
@@ -116,13 +115,13 @@ func cmdECHO(args []string) (string, error) {
 	return "$" + strconv.Itoa(len(message)) + "\r\n" + message + "\r\n", nil
 }
 
-func cmdEXISTS(args []string) (string, error) {
+func cmdEXISTS(args []string, selectedDB *int) (string, error) {
 	if len(args) < 2 {
 		return "-ERR wrong number of arguments for 'EXISTS' command\r\n", fmt.Errorf("wrong args")
 	}
 	count := 0
 	for _, key := range args[1:] {
-		_, exists := getEntry(key)
+		_, exists := getEntry(key, selectedDB)
 		if exists {
 			count++
 		}
@@ -131,13 +130,13 @@ func cmdEXISTS(args []string) (string, error) {
 	return ":" + strconv.Itoa(count) + "\r\n", nil
 }
 
-func cmdINCR(args []string) (string, error) {
+func cmdINCR(args []string, selectedDB *int) (string, error) {
 	if len(args) != 2 {
 		return "-ERR wrong number of arguments for 'INCR' command\r\n", fmt.Errorf("wrong args")
 	}
 
 	key := args[1]
-	entry, exists := getEntry(key)
+	entry, exists := getEntry(key, selectedDB)
 
 	var intValue int
 
@@ -146,14 +145,14 @@ func cmdINCR(args []string) (string, error) {
 			return "-ERR value is not an integer\r\n", fmt.Errorf("wrong type")
 		}
 		switch v := entry.Value.(type) {
-			case string:
-				var err error
-				intValue, err = strconv.Atoi(v)
-				if err != nil {
-					return "-ERR value is not an integer\r\n", fmt.Errorf("wrong type")
-				}
-			case int:
-				intValue = v
+		case string:
+			var err error
+			intValue, err = strconv.Atoi(v)
+			if err != nil {
+				return "-ERR value is not an integer\r\n", fmt.Errorf("wrong type")
+			}
+		case int:
+			intValue = v
 		}
 		intValue++
 	} else {
@@ -166,19 +165,19 @@ func cmdINCR(args []string) (string, error) {
 		ExpireAt: 0,
 	}
 
-	setEntry(key, newEntry)
+	setEntry(key, newEntry, selectedDB)
 
 	return ":" + strconv.Itoa(intValue) + "\r\n", nil
 }
 
-func cmdDECR(args []string) (string, error) {
+func cmdDECR(args []string, selectedDB *int) (string, error) {
 	if len(args) != 2 {
 		return "-ERR wrong number of arguments for 'DECR' command\r\n", fmt.Errorf("wrong args")
 	}
 
 	key := args[1]
-	entry, exists := getEntry(key)
-	
+	entry, exists := getEntry(key, selectedDB)
+
 	var intValue int
 
 	if exists {
@@ -186,14 +185,14 @@ func cmdDECR(args []string) (string, error) {
 			return "-ERR value is not an integer\r\n", fmt.Errorf("wrong type")
 		}
 		switch v := entry.Value.(type) {
-			case string:
-				var err error
-				intValue, err = strconv.Atoi(v)
-				if err != nil {
-					return "-ERR value is not an integer\r\n", fmt.Errorf("wrong type")
-				}
-			case int:
-				intValue = v
+		case string:
+			var err error
+			intValue, err = strconv.Atoi(v)
+			if err != nil {
+				return "-ERR value is not an integer\r\n", fmt.Errorf("wrong type")
+			}
+		case int:
+			intValue = v
 		}
 		intValue--
 	} else {
@@ -201,17 +200,17 @@ func cmdDECR(args []string) (string, error) {
 	}
 
 	newEntry := Entry{
-		Type:    TypeString,
+		Type:     TypeString,
 		Value:    strconv.Itoa(intValue),
 		ExpireAt: 0,
 	}
 
-	setEntry(key, newEntry)
+	setEntry(key, newEntry, selectedDB)
 
 	return ":" + strconv.Itoa(intValue) + "\r\n", nil
 }
 
-func cmdMGET(args []string) (string, error) {
+func cmdMGET(args []string, selectedDB *int) (string, error) {
 	if len(args) < 2 {
 		return "-ERR wrong number of arguments for 'MGET' command\r\n", fmt.Errorf("wrong args")
 	}
@@ -219,7 +218,7 @@ func cmdMGET(args []string) (string, error) {
 	var resp strings.Builder
 	resp.WriteString("*" + strconv.Itoa(len(args)-1) + "\r\n")
 	for _, key := range args[1:] {
-		entry, exists := getEntry(key)
+		entry, exists := getEntry(key, selectedDB)
 		if !exists || (entry.ExpireAt != 0 && entry.ExpireAt <= time.Now().Unix()) {
 			resp.WriteString("$-1\r\n")
 			continue
@@ -231,7 +230,7 @@ func cmdMGET(args []string) (string, error) {
 	return resp.String(), nil
 }
 
-func cmdMSET(args []string) (string, error) {
+func cmdMSET(args []string, selectedDB *int) (string, error) {
 	if len(args) < 3 || len(args[1:])%2 != 0 {
 		return "-ERR wrong number of arguments for 'MSET' command\r\n", fmt.Errorf("wrong args")
 	}
@@ -246,15 +245,15 @@ func cmdMSET(args []string) (string, error) {
 			ExpireAt: 0,
 		}
 
-		setEntry(key, entry)
+		setEntry(key, entry, selectedDB)
 	}
 
 	return "+OK\r\n", nil
 }
 
-func cmdFLUSHALL(args []string) (string, error) {
-	if !(len(args) == 1 || (len(args) == 2)) {
-		return "-ERR wrong number of arguments for 'FLUSHALL' command\r\n", fmt.Errorf("wrong args")
+func cmdFLUSHALL(args []string, selectedDB *int) (string, error) {
+	if !(len(args) == 1 || len(args) == 2) {
+		return "-ERR wrong number of arguments for 'FLUSHALL'\r\n", fmt.Errorf("wrong args")
 	}
 
 	mode := "SYNC"
@@ -265,33 +264,29 @@ func cmdFLUSHALL(args []string) (string, error) {
 	switch mode {
 	case "SYNC":
 		mu.Lock()
-		old := db
-		db = make(map[string]Entry)
-		atomic.StoreInt64(&usedMemory, 0)
+		// Clear ALL databases (FLUSHALL should clear everything)
+		for i := 0; i < NumDatabases; i++ {
+			databases[i] = make(map[string]Entry)
+		}
 		mu.Unlock()
-
-		go func(m map[string]Entry) {
-			_ = m
-		}(old)
-
 		return "+OK\r\n", nil
 
 	case "ASYNC":
 		go func() {
 			mu.Lock()
-			db = make(map[string]Entry)
-			lastAccess = make(map[string]int64)
-			atomic.StoreInt64(&usedMemory, 0)
+			for i := 0; i < NumDatabases; i++ {
+				databases[i] = make(map[string]Entry)
+			}
 			mu.Unlock()
 		}()
 		return "+OK\r\n", nil
 
 	default:
-		return "-ERR unknown mode for 'FLUSHALL' command\r\n", fmt.Errorf("unknown mode")
+		return "-ERR unknown mode for 'FLUSHALL'\r\n", fmt.Errorf("unknown mode")
 	}
 }
 
-func cmdEXPIRE(args []string) (string, error) {
+func cmdEXPIRE(args []string, selectedDB *int) (string, error) {
 	if len(args) < 3 || len(args) > 4 {
 		return "-ERR wrong number of arguments for 'EXPIRE' command\r\n", fmt.Errorf("wrong args")
 	}
@@ -309,7 +304,7 @@ func cmdEXPIRE(args []string) (string, error) {
 	}
 
 	// Load the entry
-	entry, exists := getEntry(key)
+	entry, exists := getEntry(key, selectedDB)
 	if !exists {
 		return ":0\r\n", nil // key does not exist
 	}
@@ -350,19 +345,19 @@ func cmdEXPIRE(args []string) (string, error) {
 	}
 
 	// Save updated entry
-	setEntry(key, entry)
+	setEntry(key, entry, selectedDB)
 
 	// Log to AOF
 
 	return ":1\r\n", nil
 }
 
-func cmdPERSIST(args []string) (string, error) {
+func cmdPERSIST(args []string, selectedDB *int) (string, error) {
 	if len(args) != 2 {
 		return "-ERR wrong number of arguments for 'PERSIST' command\r\n", fmt.Errorf("wrong args")
 	}
 
-	success := PersistEntry(args[1])
+	success := PersistEntry(args[1], selectedDB)
 	if success {
 		return ":1\r\n", nil
 	} else {
@@ -370,13 +365,13 @@ func cmdPERSIST(args []string) (string, error) {
 	}
 }
 
-func cmdTTL(args []string) (string, error) {
+func cmdTTL(args []string, selectedDB *int) (string, error) {
 	if len(args) != 2 {
 		return "-ERR wrong number of arguments for 'TTL' command\r\n", fmt.Errorf("wrong args")
 	}
 
 	// Check if key exists
-	entry, exists := getEntry(args[1])
+	entry, exists := getEntry(args[1], selectedDB)
 	if !exists {
 		return ":-2\r\n", nil // key doesn't exist
 	}
@@ -393,66 +388,66 @@ func cmdTTL(args []string) (string, error) {
 	return ":" + strconv.FormatInt(ttl, 10) + "\r\n", nil
 }
 
-func cmdHSET(args []string) (string, error) {
-    // Minimum 1 field/value pair (HSET key f v)
-    if len(args) < 4 || (len(args)-2)%2 != 0 {
-        return "-ERR wrong number of arguments for 'HSET' command\r\n", fmt.Errorf("wrong args")
-    }
+func cmdHSET(args []string, selectedDB *int) (string, error) {
+	// Minimum 1 field/value pair (HSET key f v)
+	if len(args) < 4 || (len(args)-2)%2 != 0 {
+		return "-ERR wrong number of arguments for 'HSET' command\r\n", fmt.Errorf("wrong args")
+	}
 
-    key := args[1]
-    entry, exists := getEntry(key)
+	key := args[1]
+	entry, exists := getEntry(key, selectedDB)
 
-    var hash map[string]string
+	var hash map[string]string
 
-    if exists {
-        if entry.Type != TypeHash {
-            return "-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
-                fmt.Errorf("wrong type")
-        }
-        hash = entry.Value.(map[string]string)
-    } else {
-        hash = make(map[string]string)
-    }
+	if exists {
+		if entry.Type != TypeHash {
+			return "-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
+				fmt.Errorf("wrong type")
+		}
+		hash = entry.Value.(map[string]string)
+	} else {
+		hash = make(map[string]string)
+	}
 
-    added := 0
+	added := 0
 
-    // Process field/value pairs
-    for i := 2; i < len(args); i += 2 {
-        field := args[i]
-        value := args[i+1]
+	// Process field/value pairs
+	for i := 2; i < len(args); i += 2 {
+		field := args[i]
+		value := args[i+1]
 
-        _, existedBefore := hash[field]
-        hash[field] = value
+		_, existedBefore := hash[field]
+		hash[field] = value
 
-        if !existedBefore {
-            added++
-        }
-    }
+		if !existedBefore {
+			added++
+		}
+	}
 
-    // Build new Entry
-    newEntry := Entry{
-        Type:  TypeHash,
-        Value: hash,
-    }
+	// Build new Entry
+	newEntry := Entry{
+		Type:  TypeHash,
+		Value: hash,
+	}
 
-    if exists {
-        newEntry.ExpireAt = entry.ExpireAt // preserve TTL
-    }
+	if exists {
+		newEntry.ExpireAt = entry.ExpireAt // preserve TTL
+	}
 
-    setEntry(key, newEntry)
+	setEntry(key, newEntry, selectedDB)
 
-    // DO NOT LOG inside cmd-layer
-    return ":" + strconv.Itoa(added) + "\r\n", nil
+	// DO NOT LOG inside cmd-layer
+	return ":" + strconv.Itoa(added) + "\r\n", nil
 }
 
-func cmdHGET(args []string) (string, error) {
+func cmdHGET(args []string, selectedDB *int) (string, error) {
 	if len(args) != 3 {
 		return "-ERR wrong number of arguments for 'HGET' command\r\n", fmt.Errorf("wrong args")
 	}
 
 	key := args[1]
-	
-	entry , exists := getEntry(key)
+
+	entry, exists := getEntry(key, selectedDB)
 	if !exists {
 		return "$-1\r\n", nil
 	}
@@ -474,13 +469,13 @@ func cmdHGET(args []string) (string, error) {
 	return resp, nil
 }
 
-func cmdHDEL(args []string) (string, error) {
+func cmdHDEL(args []string, selectedDB *int) (string, error) {
 	if len(args) < 3 {
 		return "-ERR wrong number of arguments for 'HDEL' command\r\n", fmt.Errorf("wrong args")
 	}
 
 	key := args[1]
-	entry, exists := getEntry(key)
+	entry, exists := getEntry(key, selectedDB)
 	if !exists {
 		return ":0\r\n", nil
 	}
@@ -503,18 +498,18 @@ func cmdHDEL(args []string) (string, error) {
 
 	// Update the entry
 	entry.Value = hash
-	setEntry(key, entry)
+	setEntry(key, entry, selectedDB)
 
 	return ":" + strconv.Itoa(deleted) + "\r\n", nil
 }
 
-func cmdHGETALL(args []string) (string, error) {
+func cmdHGETALL(args []string, selectedDB *int) (string, error) {
 	if len(args) != 2 {
 		return "-ERR wrong number of arguments for 'HGETALL' command\r\n", fmt.Errorf("wrong args")
 	}
 
 	key := args[1]
-	entry, exists := getEntry(key)
+	entry, exists := getEntry(key, selectedDB)
 	if !exists {
 		return "*0\r\n", nil
 	}
@@ -538,13 +533,13 @@ func cmdHGETALL(args []string) (string, error) {
 	return resp.String(), nil
 }
 
-func cmdHEXISTS(args []string) (string, error) {
+func cmdHEXISTS(args []string, selectedDB *int) (string, error) {
 	if len(args) != 3 {
 		return "-ERR wrong number of arguments for 'HEXISTS' command\r\n", fmt.Errorf("wrong args")
 	}
 
 	key := args[1]
-	entry, exists := getEntry(key)
+	entry, exists := getEntry(key, selectedDB)
 	if !exists {
 		return ":0\r\n", nil
 	}
@@ -565,13 +560,13 @@ func cmdHEXISTS(args []string) (string, error) {
 	}
 }
 
-func cmdHLEN(args []string) (string, error) {
+func cmdHLEN(args []string, selectedDB *int) (string, error) {
 	if len(args) != 2 {
 		return "-ERR wrong number of arguments for 'HLEN' command\r\n", fmt.Errorf("wrong args")
 	}
 
 	key := args[1]
-	entry, exists := getEntry(key)
+	entry, exists := getEntry(key, selectedDB)
 	if !exists {
 		return ":0\r\n", nil
 	}
@@ -587,69 +582,69 @@ func cmdHLEN(args []string) (string, error) {
 	return ":" + strconv.Itoa(length) + "\r\n", nil
 }
 
-func cmdZADD(args []string) (string, error) {
-    if len(args) != 4 {
-        return "-ERR wrong number of arguments for 'ZADD' command\r\n", fmt.Errorf("wrong args")
-    }
+func cmdZADD(args []string, selectedDB *int) (string, error) {
+	if len(args) != 4 {
+		return "-ERR wrong number of arguments for 'ZADD' command\r\n", fmt.Errorf("wrong args")
+	}
 
-    key := args[1]
-    scoreStr := args[2]
-    member := args[3]
+	key := args[1]
+	scoreStr := args[2]
+	member := args[3]
 
-    // parse score
-    score, err := strconv.ParseFloat(scoreStr, 64)
-    if err != nil {
-        return "-ERR value is not a valid float\r\n", err
-    }
+	// parse score
+	score, err := strconv.ParseFloat(scoreStr, 64)
+	if err != nil {
+		return "-ERR value is not a valid float\r\n", err
+	}
 
-    entry, exists := getEntry(key)
+	entry, exists := getEntry(key, selectedDB)
 
-    var z ZSet
+	var z ZSet
 
-    if exists {
-        // type check
-        if entry.Type != TypeZSet {
-            return "-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
-                fmt.Errorf("wrong type")
-        }
-        z = entry.Value.(ZSet)
-    } else {
-        // create new
-        z = ZSet{
-            Dict: make(map[string]float64),
-            List: []ZItem{},
-        }
-    }
+	if exists {
+		// type check
+		if entry.Type != TypeZSet {
+			return "-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
+				fmt.Errorf("wrong type")
+		}
+		z = entry.Value.(ZSet)
+	} else {
+		// create new
+		z = ZSet{
+			Dict: make(map[string]float64),
+			List: []ZItem{},
+		}
+	}
 
-    _, alreadyExists := z.Dict[member]
+	_, alreadyExists := z.Dict[member]
 
-    // update dict + sorted list
-    z.Dict[member] = score
-    zsetUpdate(&z, member, score)
+	// update dict + sorted list
+	z.Dict[member] = score
+	zsetUpdate(&z, member, score)
 
-    // save entry
-    newEntry := Entry{
-        Type:  TypeZSet,
-        Value: z,
-    }
+	// save entry
+	newEntry := Entry{
+		Type:  TypeZSet,
+		Value: z,
+	}
 
-    if exists {
-        newEntry.ExpireAt = entry.ExpireAt // preserve TTL
-    }
+	if exists {
+		newEntry.ExpireAt = entry.ExpireAt // preserve TTL
+	}
 
-    setEntry(key, newEntry)
+	setEntry(key, newEntry, selectedDB)
 
-    if alreadyExists {
-        return ":0\r\n", nil
-    }
-    return ":1\r\n", nil
+	if alreadyExists {
+		return ":0\r\n", nil
+	}
+	return ":1\r\n", nil
 }
 
-func cmdZRANGE(args []string) (string, error) {
+func cmdZRANGE(args []string, selectedDB *int) (string, error) {
 	if len(args) != 4 {
 		return "-ERR wrong number of arguments for 'ZRANGE' command\r\n", fmt.Errorf("wrong args")
 	}
-	
+
 	key := args[1]
 	start, err := strconv.Atoi(args[2])
 	if err != nil {
@@ -660,7 +655,7 @@ func cmdZRANGE(args []string) (string, error) {
 		return "-ERR end is not an integer\r\n", err
 	}
 
-	entry, exists := getEntry(key)
+	entry, exists := getEntry(key, selectedDB)
 	if !exists {
 		return "*0\r\n", nil
 	}
@@ -673,7 +668,7 @@ func cmdZRANGE(args []string) (string, error) {
 	z := entry.Value.(ZSet)
 	n := len(z.List)
 
-	if n==0 {
+	if n == 0 {
 		return "*0\r\n", nil
 	}
 
@@ -708,7 +703,7 @@ func cmdZRANGE(args []string) (string, error) {
 	return resp.String(), nil
 }
 
-func cmdZSCORE(args []string) (string, error) {
+func cmdZSCORE(args []string, selectedDB *int) (string, error) {
 	if len(args) != 3 {
 		return "-ERR wrong number of arguments for 'ZSCORE' command\r\n", fmt.Errorf("wrong args")
 	}
@@ -716,7 +711,7 @@ func cmdZSCORE(args []string) (string, error) {
 	key := args[1]
 	member := args[2]
 
-	entry, exists := getEntry(key)
+	entry, exists := getEntry(key, selectedDB)
 	if !exists {
 		return "$-1\r\n", nil
 	}
@@ -738,7 +733,7 @@ func cmdZSCORE(args []string) (string, error) {
 	return resp, nil
 }
 
-func cmdZREM(args []string) (string, error) {
+func cmdZREM(args []string, selectedDB *int) (string, error) {
 	if len(args) != 3 {
 		return "-ERR wrong number of arguments for 'ZREM' command\r\n", fmt.Errorf("wrong args")
 	}
@@ -746,7 +741,7 @@ func cmdZREM(args []string) (string, error) {
 	key := args[1]
 	member := args[2]
 
-	entry, exists := getEntry(key)
+	entry, exists := getEntry(key, selectedDB)
 	if !exists {
 		return ":0\r\n", nil
 	}
@@ -771,20 +766,20 @@ func cmdZREM(args []string) (string, error) {
 			break
 		}
 	}
-	
+
 	// Save updated entry
 	entry.Value = z
-	setEntry(key, entry)
+	setEntry(key, entry, selectedDB)
 	return ":1\r\n", nil
 }
 
-func cmdZCARD(args []string) (string, error) {
+func cmdZCARD(args []string, selectedDB *int) (string, error) {
 	if len(args) != 2 {
 		return "-ERR wrong number of arguments for 'ZCARD' command\r\n", fmt.Errorf("wrong args")
 	}
 
 	key := args[1]
-	entry, exists := getEntry(key)
+	entry, exists := getEntry(key, selectedDB)
 	if !exists {
 		return ":0\r\n", nil
 	}
@@ -800,7 +795,7 @@ func cmdZCARD(args []string) (string, error) {
 	return ":" + strconv.Itoa(cardinality) + "\r\n", nil
 }
 
-func cmdZRANGEBYSCORE(args []string) (string, error) {
+func cmdZRANGEBYSCORE(args []string, selectedDB *int) (string, error) {
 	if len(args) != 4 {
 		return "-ERR wrong number of arguments for 'ZRANGEBYSCORE' command\r\n", fmt.Errorf("wrong args")
 	}
@@ -819,7 +814,7 @@ func cmdZRANGEBYSCORE(args []string) (string, error) {
 		return "-ERR max is not a valid float\r\n", err
 	}
 
-	entry, exists := getEntry(key)
+	entry, exists := getEntry(key, selectedDB)
 	if !exists {
 		return "*0\r\n", nil
 	}

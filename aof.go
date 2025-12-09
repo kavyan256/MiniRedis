@@ -128,6 +128,8 @@ func ReplayAOF() {
 	isReplayingAOF = true
 	defer func() { isReplayingAOF = false }()
 
+	currentDB := 0
+
 	for {
 		args, err := parseResp(reader)
 		if err != nil {
@@ -138,8 +140,7 @@ func ReplayAOF() {
 			continue
 		}
 
-		// Execute command directly on store
-		replayCommand(args)
+		currentDB = replayCommand(args, currentDB)
 		count++
 	}
 
@@ -147,9 +148,9 @@ func ReplayAOF() {
 }
 
 // replayCommand executes a command during AOF replay
-func replayCommand(args []string) {
+func replayCommand(args []string, currentDB int) int {
 	if len(args) == 0 {
-		return
+		return currentDB
 	}
 
 	cmd := strings.ToUpper(args[0])
@@ -158,7 +159,7 @@ func replayCommand(args []string) {
 	case "SET":
 		if len(args) == 3 {
 			mu.Lock()
-			db[args[1]] = Entry{
+			databases[currentDB][args[1]] = Entry{
 				Type:  TypeString,
 				Value: args[2],
 			}
@@ -168,15 +169,41 @@ func replayCommand(args []string) {
 	case "DEL":
 		if len(args) == 2 {
 			mu.Lock()
-			delete(db, args[1])
+			delete(databases[currentDB], args[1])
 			mu.Unlock()
 		}
+
+	case "INCR":
+    if len(args)==2 {
+        entry, exists := databases[currentDB][args[1]]
+        if !exists {
+            databases[currentDB][args[1]] = Entry{Type: TypeString, Value:"1"}
+        } else {
+            v,_ := strconv.Atoi(entry.Value.(string))
+            v++
+            entry.Value=strconv.Itoa(v)
+            databases[currentDB][args[1]]=entry
+        }
+    }
+
+	case "DECR":
+	if len(args)==2 {
+		entry, exists := databases[currentDB][args[1]]
+		if !exists {
+			databases[currentDB][args[1]] = Entry{Type: TypeString, Value:"-1"}
+		} else {
+			v,_ := strconv.Atoi(entry.Value.(string))
+			v--
+			entry.Value=strconv.Itoa(v)
+			databases[currentDB][args[1]]=entry
+		}
+	}
 
 	case "MSET":
 		if len(args) >= 3 && len(args[1:])%2 == 0 {
 			mu.Lock()
 			for i := 1; i < len(args); i += 2 {
-				db[args[i]] = Entry{
+				databases[currentDB][args[i]] = Entry{
 					Type:  TypeString,
 					Value: args[i+1],
 				}
@@ -187,10 +214,10 @@ func replayCommand(args []string) {
 	case "EXPIRE":
 		if len(args) == 3 {
 			mu.Lock()
-			if entry, exists := db[args[1]]; exists {
+			if entry, exists := databases[currentDB][args[1]]; exists {
 				seconds, _ := strconv.ParseInt(args[2], 10, 64)
 				entry.ExpireAt = time.Now().Unix() + seconds
-				db[args[1]] = entry
+				databases[currentDB][args[1]] = entry
 			}
 			mu.Unlock()
 		}
@@ -198,16 +225,28 @@ func replayCommand(args []string) {
 	case "PERSIST":
 		if len(args) == 2 {
 			mu.Lock()
-			if entry, exists := db[args[1]]; exists {
+			if entry, exists := databases[currentDB][args[1]]; exists {
 				entry.ExpireAt = 0
-				db[args[1]] = entry
+				databases[currentDB][args[1]] = entry
 			}
 			mu.Unlock()
 		}
 
 	case "FLUSHALL":
 		mu.Lock()
-		db = make(map[string]Entry)
+		for i := 0; i < NumDatabases; i++ {
+			databases[i] = make(map[string]Entry)
+		}
 		mu.Unlock()
+
+	case "SELECT":
+		if len(args) == 2 {
+			dbNum, _ := strconv.Atoi(args[1])
+			if dbNum >= 0 && dbNum < NumDatabases {
+				return dbNum
+			}
+		}
 	}
+
+	return currentDB
 }

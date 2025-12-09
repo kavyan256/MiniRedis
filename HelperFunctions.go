@@ -31,9 +31,9 @@ func LogCommand(cmd string, args []string) error {
 	return nil
 }
 
-func getEntry(key string) (Entry, bool) {
+func getEntry(key string, selectedDB *int) (Entry, bool) {
 	mu.RLock()
-	entry, exists := db[key]
+	entry, exists := databases[*selectedDB][key]
 	mu.RUnlock()
 	
 	if !exists {
@@ -44,60 +44,59 @@ func getEntry(key string) (Entry, bool) {
 	if entry.ExpireAt != 0 && entry.ExpireAt <= time.Now().Unix() {
 		
 		mu.Lock()
-		delete(db, key)
+		delete(databases[*selectedDB], key)
 		mu.Unlock()
 		return Entry{}, false
 	}
 	return entry, true
 }
 
-func setEntry(key string, entry Entry) {
+func setEntry(key string, entry Entry, selectedDB *int) {
 	mu.Lock()
-	db[key] = entry
+	databases[*selectedDB][key] = entry
 	mu.Unlock()
 }
 
-func deleteEntry(key string) bool {
+func deleteEntry(key string, selectedDB *int) bool {
     mu.Lock()
-    _, exists := db[key]
+    _, exists := databases[*selectedDB][key]
     if exists {
-        delete(db, key)
+        delete(databases[*selectedDB], key)
     }
     mu.Unlock()
     return exists
 }
 
-func PersistEntry(key string) bool {
+func PersistEntry(key string, selectedDB *int) bool {
     // Use GetEntry which does lazy expiration and locking
-    e, ok := getEntry(key)
+    entry, ok := getEntry(key, selectedDB)
     if !ok {
         return false
     }
 
     // Remove TTL
-    e.ExpireAt = 0
+    entry.ExpireAt = 0
 
     // Save back (SetEntry does locking)
-    setEntry(key, e)
+    setEntry(key, entry, selectedDB)
     return true
 }
 
-func getHash(key string) (map[string]string) {
-	entry, exists := getEntry(key)
-	if !exists && entry.Type != TypeHash {
-		return nil
+func getHash(key string, selectedDB *int) (map[string]string) {
+	entry, exists := getEntry(key, selectedDB)
+	if exists {
+		if entry.Type != TypeHash {
+			return nil
+		}
+		return entry.Value.(map[string]string)
 	}
 
-	if exists {
-		return entry.Value.(map[string]string)
-	} else {
-		h := make(map[string]string)
-		setEntry(key, Entry{Type: TypeHash, Value: h})
-		return h
-	}
+	h := make(map[string]string)
+	setEntry(key, Entry{Type: TypeHash, Value: h}, selectedDB)
+	return h
 }
 
-func zsetUpdate(z *ZSet, member string, score float64) {
+func zsetUpdate(z *ZSet, member string, score float64 ) {
     // Remove old entry
     for i, item := range z.List {
         if item.Member == member {
