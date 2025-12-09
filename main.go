@@ -109,3 +109,31 @@ func cleanExpiredEntries() {
     fmt.Printf("[Janitor] Cleaned %d expired keys\n", len(toDelete))
 }
 
+func handleCommand(conn net.Conn, command string, args []string) {
+    resp, err := execCommand(args)
+
+    if err == nil && !isReplayingAOF {
+        upper := strings.ToUpper(command)
+        switch upper {
+        case "MSET", "FLUSHALL", "DEL", "SET", "EXPIRE", "PERSIST", "INCR", "DECR":
+            LogCommand(upper, args[1:])
+        }
+    }
+
+    conn.Write([]byte(resp))
+}
+
+func execCommand(args []string) (string, error) {
+    if len(args) == 0 {
+        return "-ERR empty command\r\n", fmt.Errorf("empty")
+    }
+
+    cmd := strings.ToUpper(args[0])
+
+    fn, ok := commandTable[cmd]
+    if !ok {
+        return "-ERR unknown command '" + cmd + "'\r\n", fmt.Errorf("unknown command")
+    }
+
+    return fn(args)
+}

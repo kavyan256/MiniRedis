@@ -1,57 +1,62 @@
 package main
 
 import (
-	"net"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
+	"fmt"
 )
 
-func handleCommand(conn net.Conn, command string, args []string) {
-	switch command {
-	case "SET":
-		handleSet(conn, args)
-	case "GET":
-		handleGet(conn, args)
-	case "DEL":
-		handleDel(conn, args)
-	case "PING":
-		handlePing(conn, args)
-	case "ECHO":
-		handleEcho(conn, args)
-	case "EXISTS":
-		handleExists(conn, args)
-	case "INCR":
-		handleIncr(conn, args)
-	case "DECR":
-		handleDecr(conn, args)
-	case "MGET":
-		handleMget(conn, args)
-	case "MSET":
-		handleMset(conn, args)
-	case "FLUSHALL":
-		handleFlushall(conn, args)
-	case "EXPIRE":
-		handleExpire(conn, args)
-	case "PERSIST":
-		handlePersist(conn, args)
-	case "TTL":
-		handleTTL(conn, args)
-	case "EXIT":
-		conn.Write([]byte("+OK\r\n"))
-		conn.Close()
-	default:
-		conn.Write([]byte("-ERR unknown command\r\n"))
-	}
+type CmdFunc func(args []string) (string, error)
+
+var commandTable = map[string]CmdFunc{
+	"GET":      cmdGET,
+	"SET":      cmdSET,
+	"DEL":      cmdDEL,
+	"PING":     cmdPING,
+	"ECHO":     cmdECHO,
+	"EXISTS":   cmdEXISTS,
+	"INCR":     cmdINCR,
+	"DECR":     cmdDECR,
+	"MGET":     cmdMGET,
+	"MSET":     cmdMSET,
+	"FLUSHALL": cmdFLUSHALL,
+	"EXPIRE":   cmdEXPIRE,
+	"PERSIST":  cmdPERSIST,
+	"TTL":      cmdTTL,
 }
 
 //14 command + exit
 
-func handleSet(conn net.Conn, args []string) {
+func cmdGET(args []string) (string, error) {
+    
+    if len(args) != 2 {
+        return "-ERR wrong number of arguments for 'GET'\r\n", fmt.Errorf("wrong args")
+    }
+
+    key := args[1]
+    entry, exists := getEntry(key)
+
+    if !exists {
+        return "$-1\r\n", nil
+    }
+
+    if entry.Type != TypeString {
+        return "-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
+            fmt.Errorf("wrong type")
+    }
+
+    value := entry.Value.(string)
+
+    // Return bulk string
+    resp := "$" + strconv.Itoa(len(value)) + "\r\n" + value + "\r\n"
+    return resp, nil
+}
+
+func cmdSET(args []string) (string, error) {
 	if len(args) != 3 {
-		conn.Write([]byte("-ERR wrong number of arguments for 'SET' command\r\n"))
-		return
+		return "-ERR wrong number of arguments for 'SET'\r\n", fmt.Errorf("wrong args")
 	}
 	key := args[1]
 	value := args[2]
@@ -63,72 +68,46 @@ func handleSet(conn net.Conn, args []string) {
 	}
 
 	setEntry(key, entry)
-    LogCommand("SET", args[1:])
-
-	conn.Write([]byte("+OK\r\n"))
+	LogCommand("SET", args[1:])
+	return "+OK\r\n", nil
 }
 
-
-func handleGet(conn net.Conn, args []string) {
+func cmdDEL(args []string) (string, error) {
 	if len(args) != 2 {
-		conn.Write([]byte("-ERR wrong number of arguments for 'GET' command\r\n"))
-		return
-	}
-
-	entry, exists := getEntry(args[1])
-	if !exists || (entry.ExpireAt != 0 && entry.ExpireAt <= time.Now().Unix()) {
-		conn.Write([]byte("$-1\r\n"))
-		return
-	}
-
-	if entry.Type != TypeString {
-		conn.Write([]byte("-ERR wrong type of value for 'GET' command\r\n"))
-		return
-	}
-
-	value := entry.Value.(string)
-	conn.Write([]byte("$" + strconv.Itoa(len(value)) + "\r\n" + value + "\r\n"))
-}
-
-func handleDel(conn net.Conn, args []string) {
-	if len(args) != 2 {
-		conn.Write([]byte("-ERR wrong number of arguments for 'DEL' command\r\n"))
-		return
+		return "-ERR wrong number of arguments for 'DEL'\r\n", fmt.Errorf("wrong args")
 	}
 
 	removed := deleteEntry(args[1])
 	if removed {
 		LogCommand("DEL", args[1:])
-		conn.Write([]byte(":1\r\n"))
+		return ":1\r\n", nil
 	} else {
-		conn.Write([]byte(":0\r\n"))
+		return ":0\r\n", nil
 	}
 }
 
-func handlePing(conn net.Conn, args []string) {
+func cmdPING(args []string) (string, error) {
 	if len(args) == 1 {
-		conn.Write([]byte("+PONG\r\n"))
+		return "+PONG\r\n", nil
 	} else if len(args) == 2 {
 		message := args[1]
-		conn.Write([]byte("$" + strconv.Itoa(len(message)) + "\r\n" + message + "\r\n"))
+		return "$" + strconv.Itoa(len(message)) + "\r\n" + message + "\r\n", nil
 	} else {
-		conn.Write([]byte("-ERR wrong number of arguments for 'PING' command\r\n"))
+		return "-ERR wrong number of arguments for 'PING' command\r\n", fmt.Errorf("wrong args")
 	}
 }
 
-func handleEcho(conn net.Conn, args []string) {
+func cmdECHO(args []string) (string, error) {
 	if len(args) != 2 {
-		conn.Write([]byte("-ERR wrong number of arguments for 'ECHO' command\r\n"))
-		return
+		return "-ERR wrong number of arguments for 'ECHO' command\r\n", fmt.Errorf("wrong args")
 	}
 	message := args[1]
-	conn.Write([]byte("$" + strconv.Itoa(len(message)) + "\r\n" + message + "\r\n"))
+	return "$" + strconv.Itoa(len(message)) + "\r\n" + message + "\r\n", nil
 }
 
-func handleExists(conn net.Conn, args []string) {
+func cmdEXISTS(args []string) (string, error) {
 	if len(args) < 2 {
-		conn.Write([]byte("-ERR wrong number of arguments for 'EXISTS' command\r\n"))
-		return
+		return "-ERR wrong number of arguments for 'EXISTS' command\r\n", fmt.Errorf("wrong args")
 	}
 	count := 0
 	for _, key := range args[1:] {
@@ -138,13 +117,12 @@ func handleExists(conn net.Conn, args []string) {
 		}
 	}
 
-	conn.Write([]byte(":" + strconv.Itoa(count) + "\r\n"))
+	return ":" + strconv.Itoa(count) + "\r\n", nil
 }
 
-func handleIncr(conn net.Conn, args []string) {
+func cmdINCR(args []string) (string, error) {
 	if len(args) != 2 {
-		conn.Write([]byte("-ERR wrong number of arguments for 'INCR' command\r\n"))
-		return
+		return "-ERR wrong number of arguments for 'INCR' command\r\n", fmt.Errorf("wrong args")
 	}
 
 	key := args[1]
@@ -154,8 +132,7 @@ func handleIncr(conn net.Conn, args []string) {
 
 	if exists {
 		if entry.Type != TypeString && entry.Type != TypeInt {
-			conn.Write([]byte("-ERR value is not an integer\r\n"))
-			return
+			return "-ERR value is not an integer\r\n", fmt.Errorf("wrong type")
 		}
 
 		switch v := entry.Value.(type) {
@@ -163,8 +140,7 @@ func handleIncr(conn net.Conn, args []string) {
 				var err error
 				intValue, err = strconv.Atoi(v)
 				if err != nil {
-					conn.Write([]byte("-ERR value is not an integer\r\n"))
-					return
+					return "-ERR value is not an integer\r\n", fmt.Errorf("wrong type")
 				}
 			case int:
 				intValue = v
@@ -183,13 +159,12 @@ func handleIncr(conn net.Conn, args []string) {
 	setEntry(key, newEntry)
 	LogCommand("INCR", args[1:])
 
-	conn.Write([]byte(":" + strconv.Itoa(intValue) + "\r\n"))
+	return ":" + strconv.Itoa(intValue) + "\r\n", nil
 }
 
-func handleDecr(conn net.Conn, args []string) {
+func cmdDECR(args []string) (string, error) {
 	if len(args) != 2 {
-		conn.Write([]byte("-ERR wrong number of arguments for 'DECR' command\r\n"))
-		return
+		return "-ERR wrong number of arguments for 'DECR' command\r\n", fmt.Errorf("wrong args")
 	}
 
 	key := args[1]
@@ -199,8 +174,7 @@ func handleDecr(conn net.Conn, args []string) {
 
 	if exists {
 		if entry.Type != TypeString && entry.Type != TypeInt {
-			conn.Write([]byte("-ERR value is not an integer\r\n"))
-			return
+			return "-ERR value is not an integer\r\n", fmt.Errorf("wrong type")
 		}
 
 		switch v := entry.Value.(type) {
@@ -208,8 +182,7 @@ func handleDecr(conn net.Conn, args []string) {
 				var err error
 				intValue, err = strconv.Atoi(v)
 				if err != nil {
-					conn.Write([]byte("-ERR value is not an integer\r\n"))
-					return
+					return "-ERR value is not an integer\r\n", fmt.Errorf("wrong type")
 				}
 			case int:
 				intValue = v
@@ -220,7 +193,7 @@ func handleDecr(conn net.Conn, args []string) {
 	}
 
 	newEntry := Entry{
-		Type:     TypeInt,
+		Type:    TypeInt,
 		Value:    intValue,
 		ExpireAt: 0,
 	}
@@ -228,33 +201,32 @@ func handleDecr(conn net.Conn, args []string) {
 	setEntry(key, newEntry)
 	LogCommand("DECR", args[1:])
 
-	conn.Write([]byte(":" + strconv.Itoa(intValue) + "\r\n"))
-	
+	return ":" + strconv.Itoa(intValue) + "\r\n", nil
 }
 
-func handleMget(conn net.Conn, args []string) {
+func cmdMGET(args []string) (string, error) {
 	if len(args) < 2 {
-		conn.Write([]byte("-ERR wrong number of arguments for 'MGET' command\r\n"))
-		return
+		return "-ERR wrong number of arguments for 'MGET' command\r\n", fmt.Errorf("wrong args")
 	}
 
-	conn.Write([]byte("*" + strconv.Itoa(len(args)-1) + "\r\n"))
+	var resp strings.Builder
+	resp.WriteString("*" + strconv.Itoa(len(args)-1) + "\r\n")
 	for _, key := range args[1:] {
 		entry, exists := getEntry(key)
 		if !exists || (entry.ExpireAt != 0 && entry.ExpireAt <= time.Now().Unix()) {
-			conn.Write([]byte("$-1\r\n"))
+			resp.WriteString("$-1\r\n")
 			continue
 		}
 
 		val := entry.Value.(string)
-		conn.Write([]byte("$" + strconv.Itoa(len(val)) + "\r\n" + val + "\r\n"))
+		resp.WriteString("$" + strconv.Itoa(len(val)) + "\r\n" + val + "\r\n")
 	}
+	return resp.String(), nil
 }
 
-func handleMset(conn net.Conn, args []string) {
+func cmdMSET(args []string) (string, error) {
 	if len(args) < 3 || len(args[1:])%2 != 0 {
-		conn.Write([]byte("-ERR wrong number of arguments for 'MSET' command\r\n"))
-		return
+		return "-ERR wrong number of arguments for 'MSET' command\r\n", fmt.Errorf("wrong args")
 	}
 
 	for i := 1; i < len(args); i += 2 {
@@ -271,13 +243,12 @@ func handleMset(conn net.Conn, args []string) {
 	}
 
 	LogCommand("MSET", args[1:])
-	conn.Write([]byte("+OK\r\n"))
+	return "+OK\r\n", nil
 }
 
-func handleFlushall(conn net.Conn, args []string) {
+func cmdFLUSHALL(args []string) (string, error) {
 	if !(len(args) == 1 || (len(args) == 2)) {
-		conn.Write([]byte("-ERR wrong number of arguments for 'FLUSHALL' command\r\n"))
-		return
+		return "-ERR wrong number of arguments for 'FLUSHALL' command\r\n", fmt.Errorf("wrong args")
 	}
 
 	mode := "SYNC"
@@ -297,7 +268,7 @@ func handleFlushall(conn net.Conn, args []string) {
 			_ = m
 		}(old)
 
-		conn.Write([]byte("+OK\r\n"))
+		return "+OK\r\n", nil
 
 	case "ASYNC":
 		go func() {
@@ -307,127 +278,113 @@ func handleFlushall(conn net.Conn, args []string) {
 			atomic.StoreInt64(&usedMemory, 0)
 			mu.Unlock()
 		}()
-		conn.Write([]byte("+OK\r\n"))
+		return "+OK\r\n", nil
 
 	default:
-		conn.Write([]byte("-ERR invalid option for 'FLUSHALL' command\r\n"))
+		return "-ERR unknown mode for 'FLUSHALL' command\r\n", fmt.Errorf("unknown mode")
 	}
 }
 
-func handleExpire(conn net.Conn, args []string) {
-    // EXPIRE key seconds [NX|XX|GT|LT]
-    if len(args) != 3 && len(args) != 4 {
-        conn.Write([]byte("-ERR wrong number of arguments for 'EXPIRE' command\r\n"))
-        return
-    }
+func cmdEXPIRE(args []string) (string, error) {
+	if len(args) < 3 || len(args) > 4 {
+		return "-ERR wrong number of arguments for 'EXPIRE' command\r\n", fmt.Errorf("wrong args")
+	}
 
-    key := args[1]
+	key := args[1]
 
-    seconds, err := strconv.Atoi(args[2])
-    if err != nil || seconds < 0 {
-        conn.Write([]byte("-ERR invalid expire time\r\n"))
-        return
-    }
+	seconds, err := strconv.Atoi(args[2])
+	if err != nil || seconds < 0 {
+		return "-ERR invalid expire time\r\n", fmt.Errorf("invalid expire time")
+	}
 
-    option := "NONE"
-    if len(args) == 4 {
-        option = strings.ToUpper(args[3])
-    }
+	option := "NONE"
+	if len(args) == 4 {
+		option = strings.ToUpper(args[3])
+	}
 
-    // Load the entry
-    entry, exists := getEntry(key)
-    if !exists {
-        conn.Write([]byte(":0\r\n")) // key does not exist
-        return
-    }
+	// Load the entry
+	entry, exists := getEntry(key)
+	if !exists {
+		return ":0\r\n", nil // key does not exist
+	}
 
-    newExpire := time.Now().Unix() + int64(seconds)
-    oldExpire := entry.ExpireAt
+	newExpire := time.Now().Unix() + int64(seconds)
+	oldExpire := entry.ExpireAt
 
-    switch option {
-    case "NONE":
-        entry.ExpireAt = newExpire
+	switch option {
+	case "NONE":
+		entry.ExpireAt = newExpire
 
-    case "NX": // Only set if no expiration exists
-        if oldExpire != 0 {
-            conn.Write([]byte(":0\r\n"))
-            return
-        }
-        entry.ExpireAt = newExpire
+	case "NX": // Only set if no expiration exists
+		if oldExpire != 0 {
+			return ":0\r\n", nil
+		}
+		entry.ExpireAt = newExpire
 
-    case "XX": // Only set if expiration exists
-        if oldExpire == 0 {
-            conn.Write([]byte(":0\r\n"))
-            return
-        }
-        entry.ExpireAt = newExpire
+	case "XX": // Only set if expiration exists
+		if oldExpire == 0 {
+			return ":0\r\n", nil
+		}
+		entry.ExpireAt = newExpire
 
-    case "GT": // Only set if new > old
-        if oldExpire != 0 && newExpire <= oldExpire {
-            conn.Write([]byte(":0\r\n"))
-            return
-        }
-        entry.ExpireAt = newExpire
+	case "GT": // Only set if new > old
+		if oldExpire != 0 && newExpire <= oldExpire {
+			return ":0\r\n", nil
+		}
+		entry.ExpireAt = newExpire
 
-    case "LT": // Only set if new < old
-        if oldExpire != 0 && newExpire >= oldExpire {
-            conn.Write([]byte(":0\r\n"))
-            return
-        }
-        entry.ExpireAt = newExpire
+	case "LT": // Only set if new < old
+		if oldExpire != 0 && newExpire >= oldExpire {
+			return ":0\r\n", nil
+		}
+		entry.ExpireAt = newExpire
 
-    default:
-        conn.Write([]byte("-ERR invalid expire option\r\n"))
-        return
-    }
+	default:
+		return "-ERR invalid expire option\r\n", fmt.Errorf("invalid expire option")
+	}
 
-    // Save updated entry
-    setEntry(key, entry)
+	// Save updated entry
+	setEntry(key, entry)
 
-    // Log to AOF
-    LogCommand("EXPIRE", args[1:])
+	// Log to AOF
+	LogCommand("EXPIRE", args[1:])
 
-    conn.Write([]byte(":1\r\n"))
+	return ":1\r\n", nil
 }
 
-func handlePersist(conn net.Conn, args []string) {
+func cmdPERSIST(args []string) (string, error) {
 	if len(args) != 2 {
-		conn.Write([]byte("-ERR wrong number of arguments for 'PERSIST' command\r\n"))
-		return
+		return "-ERR wrong number of arguments for 'PERSIST' command\r\n", fmt.Errorf("wrong args")
 	}
 
 	success := PersistEntry(args[1])
 	if success {
 		LogCommand("PERSIST", args[1:])
-		conn.Write([]byte(":1\r\n"))
+		return ":1\r\n", nil
 	} else {
-		conn.Write([]byte(":0\r\n"))
+		return ":0\r\n", nil
 	}
 }
 
-func handleTTL(conn net.Conn, args []string) {
+func cmdTTL(args []string) (string, error) {
 	if len(args) != 2 {
-		conn.Write([]byte("-ERR wrong number of arguments for 'TTL' command\r\n"))
-		return
+		return "-ERR wrong number of arguments for 'TTL' command\r\n", fmt.Errorf("wrong args")
 	}
 
 	// Check if key exists
 	entry, exists := getEntry(args[1])
 	if !exists {
-		conn.Write([]byte(":-2\r\n")) // key doesn't exist
-		return
+		return ":-2\r\n", nil // key doesn't exist
 	}
 
 	if entry.ExpireAt == 0 {
-		conn.Write([]byte(":-1\r\n")) // key has no expiration
-		return
+		return ":-1\r\n", nil // key has no expiration
 	}
 
 	ttl := entry.ExpireAt - time.Now().Unix()
 	if ttl < 0 {
-		conn.Write([]byte(":-2\r\n")) // key has expired
-		return
+		return ":-2\r\n", nil // key has expired
 	}
 
-	conn.Write([]byte(":" + strconv.FormatInt(ttl, 10) + "\r\n"))
+	return ":" + strconv.FormatInt(ttl, 10) + "\r\n", nil
 }
