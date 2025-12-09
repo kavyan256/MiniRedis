@@ -33,7 +33,7 @@ var commandTable = map[string]CmdFunc{
 	"HLEN":     cmdHLEN,
 }
 
-//14 command + exit
+//20 command + exit
 
 func cmdGET(args []string) (string, error) {
     
@@ -135,10 +135,9 @@ func cmdINCR(args []string) (string, error) {
 	var intValue int
 
 	if exists {
-		if entry.Type != TypeString && entry.Type != TypeInt {
+		if entry.Type != TypeString {
 			return "-ERR value is not an integer\r\n", fmt.Errorf("wrong type")
 		}
-
 		switch v := entry.Value.(type) {
 			case string:
 				var err error
@@ -155,8 +154,8 @@ func cmdINCR(args []string) (string, error) {
 	}
 
 	newEntry := Entry{
-		Type:     TypeInt,
-		Value:    intValue,
+		Type:     TypeString,
+		Value:    strconv.Itoa(intValue),
 		ExpireAt: 0,
 	}
 
@@ -176,10 +175,9 @@ func cmdDECR(args []string) (string, error) {
 	var intValue int
 
 	if exists {
-		if entry.Type != TypeString && entry.Type != TypeInt {
+		if entry.Type != TypeString {
 			return "-ERR value is not an integer\r\n", fmt.Errorf("wrong type")
 		}
-
 		switch v := entry.Value.(type) {
 			case string:
 				var err error
@@ -196,8 +194,8 @@ func cmdDECR(args []string) (string, error) {
 	}
 
 	newEntry := Entry{
-		Type:    TypeInt,
-		Value:    intValue,
+		Type:    TypeString,
+		Value:    strconv.Itoa(intValue),
 		ExpireAt: 0,
 	}
 
