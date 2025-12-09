@@ -66,17 +66,6 @@ func deleteEntry(key string) bool {
     return exists
 }
 
-func setExpiration(key string, expireAt int64) bool {
-	mu.Lock()
-	entry, exists := db[key]
-	if exists {
-		entry.ExpireAt = expireAt
-		db[key] = entry
-	}
-	mu.Unlock()
-	return exists
-}
-
 func PersistEntry(key string) bool {
     // Use GetEntry which does lazy expiration and locking
     e, ok := getEntry(key)

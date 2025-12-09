@@ -388,3 +388,12 @@ func cmdTTL(args []string) (string, error) {
 
 	return ":" + strconv.FormatInt(ttl, 10) + "\r\n", nil
 }
+
+//HSET
+
+
+//HGET
+//HDEL
+//HGETALL
+//HEXISTS
+//HLEN
