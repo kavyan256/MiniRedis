@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -94,4 +95,22 @@ func getHash(key string) (map[string]string) {
 		setEntry(key, Entry{Type: TypeHash, Value: h})
 		return h
 	}
+}
+
+func zsetUpdate(z *ZSet, member string, score float64) {
+    // Remove old entry
+    for i, item := range z.List {
+        if item.Member == member {
+            z.List = append(z.List[:i], z.List[i+1:]...)
+            break
+        }
+    }
+
+    // Insert new item
+    z.List = append(z.List, ZItem{Member: member, Score: score})
+
+    // Sort by score
+    sort.Slice(z.List, func(i, j int) bool {
+        return z.List[i].Score < z.List[j].Score
+    })
 }

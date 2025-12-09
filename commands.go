@@ -32,6 +32,7 @@ var commandTable = map[string]CmdFunc{
 	"HEXISTS":  cmdHEXISTS,
 	"HLEN":     cmdHLEN,
 	//"TYPE":     cmdTYPE,
+	"ZADD":     cmdZADD,
 }
 
 //20 command + exit
@@ -579,4 +580,62 @@ func cmdHLEN(args []string) (string, error) {
 	length := len(hash)
 
 	return ":" + strconv.Itoa(length) + "\r\n", nil
+}
+
+func cmdZADD(args []string) (string, error) {
+    if len(args) != 4 {
+        return "-ERR wrong number of arguments for 'ZADD' command\r\n", fmt.Errorf("wrong args")
+    }
+
+    key := args[1]
+    scoreStr := args[2]
+    member := args[3]
+
+    // parse score
+    score, err := strconv.ParseFloat(scoreStr, 64)
+    if err != nil {
+        return "-ERR value is not a valid float\r\n", err
+    }
+
+    entry, exists := getEntry(key)
+
+    var z ZSet
+
+    if exists {
+        // type check
+        if entry.Type != TypeZSet {
+            return "-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
+                fmt.Errorf("wrong type")
+        }
+        z = entry.Value.(ZSet)
+    } else {
+        // create new
+        z = ZSet{
+            Dict: make(map[string]float64),
+            List: []ZItem{},
+        }
+    }
+
+    _, alreadyExists := z.Dict[member]
+
+    // update dict + sorted list
+    z.Dict[member] = score
+    zsetUpdate(&z, member, score)
+
+    // save entry
+    newEntry := Entry{
+        Type:  TypeZSet,
+        Value: z,
+    }
+
+    if exists {
+        newEntry.ExpireAt = entry.ExpireAt // preserve TTL
+    }
+
+    setEntry(key, newEntry)
+
+    if alreadyExists {
+        return ":0\r\n", nil
+    }
+    return ":1\r\n", nil
 }

@@ -21,6 +21,7 @@ const (
 	TypeList
 	TypeSet
 	TypeHash
+	TypeZSet
 )
 
 type Entry struct {

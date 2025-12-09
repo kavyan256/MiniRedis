@@ -124,3 +124,12 @@ $4
 INCR
 $7
 counter
+*4
+$4
+ZADD
+$6
+scores
+$2
+50
+$5
+kavin
