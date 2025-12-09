@@ -35,6 +35,8 @@ var commandTable = map[string]CmdFunc{
 	"ZADD":     cmdZADD,
 	"ZRANGE":   cmdZRANGE,
 	"ZSCORE":   cmdZSCORE,
+	"ZREM":     cmdZREM,
+	"ZCARD":    cmdZCARD,
 }
 
 //20 command + exit
@@ -733,5 +735,67 @@ func cmdZSCORE(args []string) (string, error) {
 	scoreStr := strconv.FormatFloat(score, 'f', -1, 64)
 	resp := "$" + strconv.Itoa(len(scoreStr)) + "\r\n" + scoreStr + "\r\n"
 	return resp, nil
+}
+
+func cmdZREM(args []string) (string, error) {
+	if len(args) != 3 {
+		return "-ERR wrong number of arguments for 'ZREM' command\r\n", fmt.Errorf("wrong args")
+	}
+
+	key := args[1]
+	member := args[2]
+
+	entry, exists := getEntry(key)
+	if !exists {
+		return ":0\r\n", nil
+	}
+
+	if entry.Type != TypeZSet {
+		return "-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
+			fmt.Errorf("wrong type")
+	}
+
+	z := entry.Value.(ZSet)
+
+	_, memberExists := z.Dict[member]
+	if !memberExists {
+		return ":0\r\n", nil
+	}
+
+	// Remove from dict and list
+	delete(z.Dict, member)
+	for i, item := range z.List {
+		if item.Member == member {
+			z.List = append(z.List[:i], z.List[i+1:]...)
+			break
+		}
+	}
+	
+	// Save updated entry
+	entry.Value = z
+	setEntry(key, entry)
+	return ":1\r\n", nil
+}
+
+func cmdZCARD(args []string) (string, error) {
+	if len(args) != 2 {
+		return "-ERR wrong number of arguments for 'ZCARD' command\r\n", fmt.Errorf("wrong args")
+	}
+
+	key := args[1]
+	entry, exists := getEntry(key)
+	if !exists {
+		return ":0\r\n", nil
+	}
+
+	if entry.Type != TypeZSet {
+		return "-ERR WRONGTYPE Operation against a key holding the wrong kind of value\r\n",
+			fmt.Errorf("wrong type")
+	}
+
+	z := entry.Value.(ZSet)
+	cardinality := len(z.Dict)
+
+	return ":" + strconv.Itoa(cardinality) + "\r\n", nil
 }
 
