@@ -120,6 +120,26 @@ func cleanExpiredEntries() {
 func handleCommand(conn net.Conn, command string, args []string, selectedDB *int) {
 
     SetCurrentConn(conn)
+
+    // ---- Pub/Sub mode enforcement ----
+    pubsubModeMu.RLock()
+    inPubSub := pubsubMode[conn]
+    pubsubModeMu.RUnlock()
+
+    if inPubSub {
+        switch command {
+        case "SUBSCRIBE", "UNSUBSCRIBE", "PING":
+            // allowed
+        default:
+            conn.Write([]byte(
+                "-ERR only (SUBSCRIBE / UNSUBSCRIBE / PING) allowed in pubsub mode\r\n",
+            ))
+            return
+        }
+    }
+    // ---- end pub/sub enforcement ----
+
+
     resp, err := execCommand(args, selectedDB)
 
     if err == nil && !isReplayingAOF {
