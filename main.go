@@ -47,7 +47,10 @@ func main() {
 }
 
 func handleConnection(conn net.Conn) {
-    defer conn.Close()
+    defer func ()  {            //prevent memory leak on client disconnect
+        unsubscribeClient(conn, nil)
+        conn.Close()
+    }()
 
     fmt.Println("New client connected:", conn.RemoteAddr())
 
@@ -110,6 +113,8 @@ func cleanExpiredEntries() {
 
 
 func handleCommand(conn net.Conn, command string, args []string, selectedDB *int) {
+
+    SetCurrentConn(conn)
     resp, err := execCommand(args, selectedDB)
 
     if err == nil && !isReplayingAOF {

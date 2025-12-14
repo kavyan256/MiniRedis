@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"net"
 )
 
 type CmdFunc func(args []string, selectedDB *int) (string, error)
@@ -37,6 +38,9 @@ var commandTable = map[string]CmdFunc{
 	"ZREM":          cmdZREM,
 	"ZCARD":         cmdZCARD,
 	"ZRANGEBYSCORE": cmdZRANGEBYSCORE,
+	"SUBSCRIBE":     cmdSUBSCRIBE,
+	"UNSUBSCRIBE":   cmdUNSUBSCRIBE,
+	"PUBLISH":       cmdPUBLISH,
 }
 
 //26 command + exit
@@ -844,3 +848,70 @@ func cmdZRANGEBYSCORE(args []string, selectedDB *int) (string, error) {
 
 	return resp.String(), nil
 }
+
+func cmdSUBSCRIBE(args []string, selectedDB *int) (string, error) {
+	if len(args) < 2 {
+		return "-ERR wrong number of arguments for 'SUBSCRIBE'\r\n", nil
+	}
+
+	conn := GetCurrentConn()     // current client connection
+	channels := args[1:]         // channel names
+
+	subscribeClient(conn, channels)
+
+	// Redis does NOT send a normal reply for SUBSCRIBE
+	return "", nil
+}
+
+func cmdUNSUBSCRIBE(args []string, selectedDB *int) (string, error) {
+	conn := GetCurrentConn()
+
+	// UNSUBSCRIBE with no args = unsubscribe from all
+	if len(args) == 1 {
+		unsubscribeClient(conn, nil)
+		return "", nil
+	}
+
+	channels := args[1:]
+	unsubscribeClient(conn, channels)
+	return "", nil
+}
+
+func cmdPUBLISH(args []string, selectedDB *int) (string, error) {
+	if len(args) != 3 {
+		return "-ERR wrong number of arguments for 'PUBLISH'\r\n", nil
+	}
+
+	channel := args[1]
+	message := args[2]
+
+	subsMu.RLock()
+	subSet, exists := subs[channel]
+	subsMu.RUnlock()
+
+	if !exists {
+		return ":0\r\n", nil
+	}
+
+	count := 0
+
+	for conn := range subSet {
+		resp := buildArrayRESP([]string{
+			"message",
+			channel,
+			message,
+		})
+
+		mu := ensureWriteMu(conn)
+		go func(c net.Conn, b string) {
+			mu.Lock()
+			defer mu.Unlock()
+			c.Write([]byte(b))
+		}(conn, resp)
+
+		count++
+	}
+
+	return ":" + strconv.Itoa(count) + "\r\n", nil
+}
+
