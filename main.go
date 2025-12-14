@@ -49,6 +49,11 @@ func main() {
 func handleConnection(conn net.Conn) {
     defer func ()  {            //prevent memory leak on client disconnect
         unsubscribeClient(conn, nil)
+
+        pubsubModeMu.Lock()
+        delete(pubsubMode, conn)
+        pubsubModeMu.Unlock()
+
         conn.Close()
     }()
 
