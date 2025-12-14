@@ -901,15 +901,20 @@ func cmdPUBLISH(args []string, selectedDB *int) (string, error) {
 
 	subsMu.RLock()
 	subSet, exists := subs[channel]
-	subsMu.RUnlock()
-
 	if !exists {
+		subsMu.RUnlock()
 		return ":0\r\n", nil
 	}
 
+	conns := make([]net.Conn, 0, len(subSet))
+	for conn := range subSet {
+		conns = append(conns, conn)
+	}
+	subsMu.RUnlock()
+
 	count := 0
 
-	for conn := range subSet {
+	for _, conn := range conns {
 		resp := buildArrayRESP([]string{
 			"message",
 			channel,
