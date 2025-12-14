@@ -54,6 +54,10 @@ func handleConnection(conn net.Conn) {
         delete(pubsubMode, conn)
         pubsubModeMu.Unlock()
 
+        writeMuPerConnMu.Lock()
+        delete(writeMuPerConn, conn)
+        writeMuPerConnMu.Unlock()
+
         conn.Close()
     }()
 
