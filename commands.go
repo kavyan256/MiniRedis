@@ -859,6 +859,10 @@ func cmdSUBSCRIBE(args []string, selectedDB *int) (string, error) {
 
 	subscribeClient(conn, channels)
 
+	pubsubModeMu.Lock()
+	pubsubMode[conn] = true
+	pubsubModeMu.Unlock()
+
 	// Redis does NOT send a normal reply for SUBSCRIBE
 	return "", nil
 }
@@ -869,11 +873,21 @@ func cmdUNSUBSCRIBE(args []string, selectedDB *int) (string, error) {
 	// UNSUBSCRIBE with no args = unsubscribe from all
 	if len(args) == 1 {
 		unsubscribeClient(conn, nil)
-		return "", nil
+	} else {
+		unsubscribeClient(conn, args[1:])
 	}
 
-	channels := args[1:]
-	unsubscribeClient(conn, channels)
+	subsMu.RLock()
+	_, stillSubscribed := connectedChannels[conn]
+	subsMu.RUnlock()
+
+	if !stillSubscribed {
+		pubsubModeMu.Lock()
+		delete(pubsubMode, conn)
+		pubsubModeMu.Unlock()
+	}
+
+	// Redis does NOT send a normal reply for UNSUBSCRIBE
 	return "", nil
 }
 
@@ -915,3 +929,4 @@ func cmdPUBLISH(args []string, selectedDB *int) (string, error) {
 	return ":" + strconv.Itoa(count) + "\r\n", nil
 }
 
+ 
