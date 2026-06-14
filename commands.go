@@ -41,6 +41,7 @@ var commandTable = map[string]CmdFunc{
 	"SUBSCRIBE":     cmdSUBSCRIBE,
 	"UNSUBSCRIBE":   cmdUNSUBSCRIBE,
 	"PUBLISH":       cmdPUBLISH,
+	"INFO":          cmdINFO,
 }
 
 //26 command + exit
@@ -934,4 +935,55 @@ func cmdPUBLISH(args []string, selectedDB *int) (string, error) {
 	return ":" + strconv.Itoa(count) + "\r\n", nil
 }
 
+func cmdINFO(args []string, selectedDB *int) (string, error) {
+	if len(args) > 2 {
+		return "-ERR wrong number of arguments for 'INFO'\r\n", nil
+	}
+
+	var resp strings.Builder
+
+	// Server section
+	resp.WriteString("# Server\r\n")
+	resp.WriteString("redis_version:0.1\r\n")
+	resp.WriteString("redis_git_sha1:00000000\r\n")
+	resp.WriteString("redis_git_dirty:0\r\n")
+	resp.WriteString("redis_build_id:0000000000000000000000000000000000000000\r\n")
+	resp.WriteString("redis_mode:standalone\r\n")
+	resp.WriteString("os:linux\r\n")
+	resp.WriteString("arch_bits:64\r\n")
+	resp.WriteString("multiplexing_api:epoll\r\n")
+	resp.WriteString("gcc_version:9.3.0\r\n")
+	//resp.WriteString("process_id:" + strconv.Itoa(getpid()) + "\r\n")
+	resp.WriteString("run_id:000000000000000000000000000000000000000000\r\n")
+	//resp.WriteString("tcp_port:" + strconv.Itoa(ServerPort) + "\r\n")
+	//resp.WriteString("uptime_in_seconds:" + strconv.FormatInt(time.Now().Unix()-startTime, 10) + "\r\n")
+	resp.WriteString("uptime_in_days:0\r\n")
+
+	// Clients section
+	resp.WriteString("# Clients\r\n")
+	//clientsMu.RLock()
+	//resp.WriteString("connected_clients:" + strconv.Itoa(len(clients)) + "\r\n")
+	//clientsMu.RUnlock()
+
+	//dummy info
+	resp.WriteString("connected_clients:1\r\n")
+
+	// Memory section
+	resp.WriteString("# Memory\r\n")
+	mu.RLock()
+	totalKeys := 0
+	for i := 0; i < NumDatabases; i++ {
+		totalKeys += len(databases[i])
+	}
+	mu.RUnlock()
+	resp.WriteString("db0:keys=" + strconv.Itoa(totalKeys) + ",expires=0,avg_ttl=0\r\n")
+
+	// Stats section
+	resp.WriteString("# Stats\r\n")
+	resp.WriteString("total_connections_received:0\r\n")
+	resp.WriteString("total_commands_processed:0\r\n")
+	resp.WriteString("instantaneous_ops_per_sec:0\r\n")
+
+	return "$" + strconv.Itoa(len(resp.String())) + "\r\n" + resp.String() + "\r\n", nil
+}
  
